@@ -19,7 +19,7 @@ def get_supabase_client():
     key = st.secrets["supabase"]["key"]
     return create_client(url, key)
 
-@st.cache_data(ttl=300)  # Cache 5 minutos
+@st.cache_data(ttl=300)
 def get_cached_inventario():
     return cargar_inventario()
 
@@ -660,7 +660,7 @@ else:
                     st.error("❌ Ingresa nombre de caja")
         
         with tab3:
-            st.subheader("📝 Agregar Items a Caja")
+            st.subheader("📝 Agregar / Editar Items en Caja")
             if not inventario.empty:
                 caja_sel = st.selectbox("Selecciona Caja", inventario["Caja"].tolist())
                 caja_id = int(inventario[inventario["Caja"]==caja_sel].iloc[0]["id"])
@@ -669,14 +669,28 @@ else:
                 st.markdown("---")
                 
                 if not items.empty:
-                    st.markdown("**Items Actuales:**")
+                    st.markdown("**📋 Items Actuales:**")
                     for _, item in items.iterrows():
-                        col1, col2, col3, col4, col5 = st.columns([2, 1.5, 1, 1.5, 0.5])
-                        with col1: st.write(f"**{item['nombre']}**")
-                        with col2: st.write(f"{item['descripcion']}")
-                        with col3: st.write(f"x{int(item['cantidad'])}")
-                        with col4: st.write(f"${int(item['precio_unitario'])}")
-                        with col5:
+                        col1, col2, col3, col4, col5, col6 = st.columns([2, 1.5, 0.8, 1.2, 1, 0.8])
+                        with col1: 
+                            st.write(f"**{item['nombre']}**")
+                        with col2: 
+                            st.write(f"{item['descripcion']}")
+                        with col3: 
+                            st.write(f"x{int(item['cantidad'])}")
+                        with col4:
+                            nuevo_precio = st.number_input(
+                                f"Precio {item['nombre']}", 
+                                value=int(item['precio_unitario']), 
+                                step=100,
+                                key=f"edit_price_{item['id']}"
+                            )
+                            if nuevo_precio != int(item['precio_unitario']):
+                                if actualizar_item_caja(int(item["id"]), {"precio_unitario": nuevo_precio}):
+                                    st.success("✅")
+                        with col5: 
+                            st.write(f"${int(item['cantidad'] * item['precio_unitario']):,.0f}")
+                        with col6:
                             if st.button("🗑️", key=f"del_item_{item['id']}", use_container_width=True):
                                 if eliminar_item_caja(int(item["id"])): 
                                     st.success("✅"); st.rerun()
@@ -899,8 +913,7 @@ else:
             col5, col6 = st.columns(2)
             with col5: cantv = st.number_input("Cantidad", min_value=1, value=1)
             with col6:
-                valu = int(inventario[inventario["Caja"]==cajav].iloc[0]["Cantidad"]) if not inventario.empty and cajav!="Sin cajas" else 0
-                # Calcular precio promedio de items
+                valu = 0
                 if not inventario.empty and cajav!="Sin cajas":
                     caja_id = int(inventario[inventario["Caja"]==cajav].iloc[0]["id"])
                     items = cargar_items_caja(caja_id)
