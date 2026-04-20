@@ -72,10 +72,10 @@ def cargar_inventario():
             for col in ["Valor_Unitario", "Cantidad", "Cantidad_Total"]:
                 if col not in df.columns: df[col] = 0
             return df
-        return pd.DataFrame(columns=["id","Caja","Cantidad","Valor_Unitario","Cantidad_Total"])
+        return pd.DataFrame(columns=["id","Caja","Cantidad","Valor_Unitario","Cantidad_Total","serial"])
     except Exception as e:
         st.error(f"Error cargando inventario: {e}")
-        return pd.DataFrame(columns=["id","Caja","Cantidad","Valor_Unitario","Cantidad_Total"])
+        return pd.DataFrame(columns=["id","Caja","Cantidad","Valor_Unitario","Cantidad_Total","serial"])
 
 def guardar_caja_nueva(caja, cantidad, valor_unitario):
     try:
@@ -98,6 +98,55 @@ def eliminar_caja(caja_id):
     try:
         supabase = get_supabase_client()
         supabase.table("inventario").delete().eq("id", caja_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error: {e}"); return False
+
+# ==============================
+# ITEMS EN CAJAS (NUEVO)
+# ==============================
+def cargar_items_caja(caja_id):
+    try:
+        supabase = get_supabase_client()
+        resp = supabase.table("items_caja").select("*").eq("caja_id", caja_id).execute()
+        if resp.data:
+            df = pd.DataFrame(resp.data)
+            for col in ["nombre","descripcion","cantidad","precio_unitario"]:
+                if col not in df.columns: df[col] = ""
+            return df
+        return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item"])
+    except Exception as e:
+        st.error(f"Error cargando items: {e}")
+        return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item"])
+
+def guardar_item_caja(caja_id, nombre, descripcion, cantidad, precio_unitario):
+    try:
+        supabase = get_supabase_client()
+        serial_item = generar_serial("ITM")
+        supabase.table("items_caja").insert({
+            "caja_id": int(caja_id), 
+            "nombre": nombre, 
+            "descripcion": descripcion, 
+            "cantidad": int(cantidad), 
+            "precio_unitario": int(precio_unitario),
+            "serial_item": serial_item
+        }).execute()
+        return True, serial_item
+    except Exception as e:
+        st.error(f"Error: {e}"); return False, None
+
+def eliminar_item_caja(item_id):
+    try:
+        supabase = get_supabase_client()
+        supabase.table("items_caja").delete().eq("id", item_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error: {e}"); return False
+
+def actualizar_item_caja(item_id, campos):
+    try:
+        supabase = get_supabase_client()
+        supabase.table("items_caja").update(campos).eq("id", item_id).execute()
         return True
     except Exception as e:
         st.error(f"Error: {e}"); return False
@@ -313,7 +362,16 @@ def cargar_ventas(asesor=None):
 def guardar_venta(fecha, cliente, caja, cantidad, valor_unitario, monto, es_credito, asesor):
     try:
         supabase = get_supabase_client()
-        supabase.table("ventas").insert({"fecha": fecha.strftime("%Y-%m-%d"), "cliente": cliente, "caja": caja, "cantidad": int(cantidad), "valor_unitario": int(valor_unitario), "monto": int(monto), "es_credito": bool(es_credito), "asesor": asesor}).execute()
+        supabase.table("ventas").insert({
+            "fecha": fecha.strftime("%Y-%m-%d"), 
+            "cliente": cliente, 
+            "caja": caja, 
+            "cantidad": int(cantidad), 
+            "valor_unitario": int(valor_unitario), 
+            "monto": int(monto),
+            "es_credito": es_credito,
+            "asesor": asesor
+        }).execute()
         registrar_historial_asignacion(asesor, caja, cantidad, "venta", f"Venta de {cantidad} uds a cliente '{cliente}'")
         return True
     except Exception as e:
@@ -414,7 +472,7 @@ else:
     st.sidebar.markdown("---")
 
     if ROL == "admin":
-        menu = st.sidebar.radio("📋 MENÚ", [
+        menu = st.sidebar.radio("��� MENÚ", [
             "📊 Dashboard", "👥 Clientes", "📦 Insumos (Cajas)",
             "🖥️ Equipos", "🔋 Baterías", "📋 Asignaciones",
             "🛒 Ventas", "💳 Créditos", "📜 Historial Asignaciones", "📈 Reportes"
@@ -481,9 +539,9 @@ else:
                     with c1:
                         st.write(f"**🔋 Nombre:** {bat.get('nombre','')}"); st.write(f"**📋 Serial:** {bat.get('serial','')}"); st.write(f"**🏭 Proveedor:** {bat.get('proveedor','')}")
                     with c2:
-                        eb = bat.get('estado',''); st.write(f"**{COLOR_BATERIA.get(eb,'⚪')} Estado:** {eb}"); st.write(f"**⏱️ Horas uso:** {int(bat.get('tiempo_uso_horas',0))}"); st.write(f"**📅 F. compra:** {bat.get('fecha_compra','')}")
+                        eb = bat.get('estado',''); st.write(f"**{COLOR_BATERIA.get(eb,'⚪')} Estado:** {eb}"); st.write(f"**⏱️ Horas uso:** {int(bat.get('tiempo_uso_horas',0))}"); st.write(f"**💰 Costo:** ${int(bat.get('costo',0)):,.0f}")
                     with c3:
-                        st.write(f"**💰 Costo:** ${int(bat.get('costo',0)):,.0f}"); st.write(f"**🖥️ Equipo:** {bat.get('equipo_asignado','') or 'Sin asignar'}"); st.write(f"**💬 Notas:** {bat.get('notas','')}")
+                        st.write(f"**🖥️ Equipo:** {bat.get('equipo_asignado','') or 'Sin asignar'}"); st.write(f"**💬 Notas:** {bat.get('notas','')}")
                 else:
                     st.warning(f"⚠️ No se encontró ningún item con serial **{serial_buscar}**")
             else: st.warning("Ingresa un serial para buscar")
@@ -534,7 +592,8 @@ else:
     elif menu == "📦 Insumos (Cajas)" and ROL == "admin":
         st.title("📦 GESTIÓN DE INSUMOS (CAJAS)")
         inventario = cargar_inventario()
-        tab1, tab2, tab3 = st.tabs(["Ver Cajas", "Agregar Nueva Caja", "➕ Agregar Unidades"])
+        tab1, tab2, tab3, tab4 = st.tabs(["Ver Cajas", "Agregar Nueva Caja", "➕ Agregar Unidades", "📋 Gestionar Items"])
+        
         with tab1:
             if not inventario.empty:
                 for _, row in inventario.iterrows():
@@ -553,6 +612,7 @@ else:
                             if eliminar_caja(int(row["id"])): st.success("✅"); st.rerun()
                     st.divider()
             else: st.info("Sin cajas")
+        
         with tab2:
             caja = st.text_input("Nombre de la Caja")
             c1,c2 = st.columns(2)
@@ -563,6 +623,7 @@ else:
                     ok, serial = guardar_caja_nueva(caja, cantidad, valor)
                     if ok: st.success(f"✅ Caja '{caja}' agregada"); st.info(f"📋 **Serial: `{serial}`**"); st.rerun()
                 else: st.error("Completa todos los campos")
+        
         with tab3:
             if not inventario.empty:
                 opciones = [f"{row['Caja']} — Stock: {int(row['Cantidad'])}" for _, row in inventario.iterrows()]
@@ -574,6 +635,46 @@ else:
                 if st.button("💾 Guardar", use_container_width=True):
                     if actualizar_caja(int(row["id"]), {"Cantidad": int(row["Cantidad"])+unidades, "Cantidad_Total": int(row["Cantidad_Total"])+unidades, "Valor_Unitario": np2}):
                         st.success("✅ Actualizado"); st.rerun()
+
+        with tab4:
+            st.subheader("📋 Gestionar Items dentro de Cajas")
+            if not inventario.empty:
+                caja_sel = st.selectbox("Selecciona una Caja", inventario["Caja"].tolist(), key="caja_items")
+                caja_id = int(inventario[inventario["Caja"]==caja_sel].iloc[0]["id"])
+                
+                st.markdown("---")
+                st.subheader(f"Items en: **{caja_sel}**")
+                items = cargar_items_caja(caja_id)
+                
+                if not items.empty:
+                    st.markdown("**Items Actuales:**")
+                    for _, item_row in items.iterrows():
+                        c1,c2,c3,c4,c5 = st.columns([2,2,1.5,1.5,1])
+                        with c1: st.write(f"**{item_row['nombre']}**")
+                        with c2: st.write(f"{item_row['descripcion']}")
+                        with c3: st.write(f"Cant: {int(item_row['cantidad'])}")
+                        with c4: st.write(f"${int(item_row['precio_unitario'])}")
+                        with c5:
+                            if st.button("🗑️", key=f"del_item_{item_row['id']}"):
+                                if eliminar_item_caja(int(item_row["id"])): st.success("✅"); st.rerun()
+                
+                st.markdown("---")
+                st.subheader("➕ Agregar Nuevo Item")
+                c1,c2 = st.columns(2)
+                with c1:
+                    item_nombre = st.text_input("Nombre del Item", placeholder="Ej: Jeringa 10ml")
+                    item_cantidad = st.number_input("Cantidad", min_value=1, value=1, key="item_cant")
+                with c2:
+                    item_desc = st.text_input("Descripción", placeholder="Ej: Tipo Luer Lock")
+                    item_precio = st.number_input("Precio Unitario ($)", min_value=0, value=0, step=100, key="item_precio")
+                
+                if st.button("💾 Agregar Item", use_container_width=True):
+                    if item_nombre and item_precio > 0:
+                        ok, serial = guardar_item_caja(caja_id, item_nombre, item_desc, item_cantidad, item_precio)
+                        if ok: st.success(f"✅ Item '{item_nombre}' agregado"); st.info(f"📋 **Serial: `{serial}`**"); st.rerun()
+                    else: st.error("Completa nombre y precio")
+            else:
+                st.warning("⚠️ Crea una caja primero")
 
     # ADMIN - EQUIPOS
     elif menu == "🖥️ Equipos" and ROL == "admin":
@@ -626,7 +727,7 @@ else:
                 else: st.error("Completa el nombre del equipo")
 
     # ============================================================
-    # ADMIN - BATERIAS (NUEVO)
+    # ADMIN - BATERIAS
     # ============================================================
     elif menu == "🔋 Baterías" and ROL == "admin":
         st.title("🔋 GESTIÓN DE BATERÍAS")
@@ -883,7 +984,7 @@ else:
         else: st.info("✅ Sin créditos")
 
     # ============================================================
-    # ADMIN - HISTORIAL ASIGNACIONES (NUEVO)
+    # ADMIN - HISTORIAL ASIGNACIONES
     # ============================================================
     elif menu == "📜 Historial Asignaciones" and ROL == "admin":
         st.title("📜 HISTORIAL DE ASIGNACIONES Y MOVIMIENTOS")
@@ -936,8 +1037,8 @@ else:
             tl = ht.groupby(["fecha_dia","tipo"])["cantidad"].sum().reset_index()
             if not tl.empty:
                 fig_t = px.line(tl, x="fecha_dia", y="cantidad", color="tipo",
-                                labels={"fecha_dia":"Fecha","cantidad":"Unidades","tipo":"Tipo"},
-                                color_discrete_map={"asignacion":"#3498db","venta":"#27ae60","devolucion":"#e67e22"})
+                               labels={"fecha_dia":"Fecha","cantidad":"Unidades","tipo":"Tipo"},
+                               color_discrete_map={"asignacion":"#3498db","venta":"#27ae60","devolucion":"#e67e22"})
                 st.plotly_chart(fig_t, use_container_width=True)
             st.markdown("---")
             if st.button("📥 Exportar Historial a Excel", use_container_width=True):
