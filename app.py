@@ -39,9 +39,17 @@ COLOR_ESTADO = {"Recién ingresado": "🟡", "En proceso de venta": "🔵", "Lis
 ESTADOS_BATERIA = ["Disponible", "En uso", "Dañada", "En mantenimiento", "Baja de inventario"]
 COLOR_BATERIA = {"Disponible": "🟢", "En uso": "🔵", "Dañada": "🔴", "En mantenimiento": "🟡", "Baja de inventario": "⚫"}
 
+# Categorías para análisis de datos
+CATEGORIAS_ITEM = ["General", "Sensores", "Electrodos", "Cables", "Consumibles", "Repuestos", "Accesorios", "Otros"]
+TIPOS_PACIENTE = ["General", "Adulto", "Pediátrico", "Neonatal"]
+MARCAS_COMUNES = ["Sin marca", "Philips", "GE", "Mindray", "Nihon Kohden", "Spacelabs", "Masimo", "Nellcor", "Covidien", "Otras"]
+
 def generar_serial(prefijo="SM"):
     chars = string.ascii_uppercase + string.digits
     return f"{prefijo}-{''.join(random.choices(chars, k=6))}"
+
+def clear_all_cache():
+    st.cache_data.clear()
 
 # ==============================
 # BÚSQUEDA
@@ -153,12 +161,19 @@ def actualizar_caja(caja_id, campos):
     except Exception as e:
         st.error(f"❌ Error: {e}"); return False
 
+# ✅ NUEVO: Renombrar caja
+def renombrar_caja(caja_id, nuevo_nombre):
+    try:
+        supabase = get_supabase_client()
+        supabase.table("inventario").update({"Caja": nuevo_nombre}).eq("id", caja_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"❌ Error renombrando caja: {e}"); return False
+
 def eliminar_caja(caja_id):
     try:
         supabase = get_supabase_client()
-        # Primero eliminar items
         supabase.table("items_caja").delete().eq("caja_id", caja_id).execute()
-        # Luego eliminar caja
         supabase.table("inventario").delete().eq("id", caja_id).execute()
         return True
     except Exception as e:
@@ -177,23 +192,53 @@ def cargar_items_caja(caja_id):
                 if col not in df.columns: df[col] = ""
             for col in ["cantidad","precio_unitario"]:
                 if col not in df.columns: df[col] = 0
+            # ✅ NUEVAS columnas para análisis
+            for col in ["categoria","tipo_paciente","marca"]:
+                if col not in df.columns: df[col] = "General" if col != "marca" else "Sin marca"
             return df
-        return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item"])
+        return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item","categoria","tipo_paciente","marca"])
     except Exception as e:
         st.error(f"❌ Error cargando items: {e}")
-        return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item"])
+        return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item","categoria","tipo_paciente","marca"])
 
-def guardar_item_caja(caja_id, nombre, descripcion, cantidad, precio_unitario):
+def cargar_todos_los_items():
+    """Carga todos los items de todas las cajas para análisis global"""
+    try:
+        supabase = get_supabase_client()
+        resp = supabase.table("items_caja").select("*, inventario(Caja)").execute()
+        if resp.data:
+            df = pd.DataFrame(resp.data)
+            # Extraer nombre de caja del join
+            if "inventario" in df.columns:
+                df["nombre_caja"] = df["inventario"].apply(
+                    lambda x: x.get("Caja", "") if isinstance(x, dict) else ""
+                )
+                df = df.drop(columns=["inventario"])
+            for col in ["nombre","descripcion","categoria","tipo_paciente","marca","nombre_caja"]:
+                if col not in df.columns: df[col] = ""
+            for col in ["cantidad","precio_unitario"]:
+                if col not in df.columns: df[col] = 0
+            df["subtotal"] = df["cantidad"] * df["precio_unitario"]
+            return df
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"❌ Error cargando items globales: {e}")
+        return pd.DataFrame()
+
+def guardar_item_caja(caja_id, nombre, descripcion, cantidad, precio_unitario, categoria="General", tipo_paciente="General", marca="Sin marca"):
     try:
         supabase = get_supabase_client()
         serial_item = generar_serial("ITM")
         supabase.table("items_caja").insert({
-            "caja_id": int(caja_id), 
-            "nombre": nombre, 
-            "descripcion": descripcion, 
-            "cantidad": int(cantidad), 
+            "caja_id": int(caja_id),
+            "nombre": nombre,
+            "descripcion": descripcion,
+            "cantidad": int(cantidad),
             "precio_unitario": int(precio_unitario),
-            "serial_item": serial_item
+            "serial_item": serial_item,
+            "categoria": categoria,
+            "tipo_paciente": tipo_paciente,
+            "marca": marca
         }).execute()
         return True, serial_item
     except Exception as e:
@@ -216,7 +261,6 @@ def actualizar_item_caja(item_id, campos):
         st.error(f"❌ Error: {e}"); return False
 
 def calcular_valor_caja(items_df):
-    """Calcula valor total de la caja basado en items"""
     if items_df.empty:
         return 0
     return int((items_df["cantidad"] * items_df["precio_unitario"]).sum())
@@ -318,9 +362,12 @@ def eliminar_bateria(bat_id):
         st.error(f"❌ Error: {e}"); return False
 
 # ==============================
-# HISTORIAL
+# HISTORIAL  (sin créditos)
 # ==============================
 def registrar_historial_asignacion(asesor, caja, cantidad, tipo, nota=""):
+    # ✅ Solo registra si NO es tipo crédito
+    if tipo == "credito":
+        return
     try:
         supabase = get_supabase_client()
         supabase.table("historial_asignaciones").insert({
@@ -337,6 +384,7 @@ def cargar_historial_asignaciones(asesor=None, caja=None):
         query = supabase.table("historial_asignaciones").select("*")
         if asesor: query = query.eq("asesor", asesor)
         if caja: query = query.eq("caja", caja)
+        # ✅ Excluir registros tipo crédito
         resp = query.order("fecha", desc=True).execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
@@ -344,6 +392,8 @@ def cargar_historial_asignaciones(asesor=None, caja=None):
             for col in ["asesor","caja","tipo","nota"]:
                 if col not in df.columns: df[col] = ""
             if "cantidad" not in df.columns: df["cantidad"] = 0
+            # ✅ Filtrar créditos fuera
+            df = df[df["tipo"] != "credito"]
             return df
         return pd.DataFrame(columns=["id","asesor","caja","cantidad","tipo","nota","fecha"])
     except Exception as e:
@@ -401,11 +451,11 @@ def guardar_venta(fecha, cliente, caja, cantidad, valor_unitario, monto, es_cred
     try:
         supabase = get_supabase_client()
         supabase.table("ventas").insert({
-            "fecha": fecha.strftime("%Y-%m-%d"), 
-            "cliente": cliente, 
-            "caja": caja, 
-            "cantidad": int(cantidad), 
-            "valor_unitario": int(valor_unitario), 
+            "fecha": fecha.strftime("%Y-%m-%d"),
+            "cliente": cliente,
+            "caja": caja,
+            "cantidad": int(cantidad),
+            "valor_unitario": int(valor_unitario),
             "monto": int(monto),
             "es_credito": es_credito,
             "asesor": asesor
@@ -492,7 +542,7 @@ if not st.session_state.authenticated:
                 else:
                     st.error("❌ Usuario o contraseña incorrectos")
         with cb:
-            if st.button("❌ Salir", use_container_width=True): 
+            if st.button("❌ Salir", use_container_width=True):
                 st.info("👋 Hasta luego")
         st.markdown("---")
 
@@ -507,8 +557,8 @@ else:
         st.caption(f"{'🔑 Administrador' if ROL == 'admin' else '🧑‍💼 Asesor'}")
         st.markdown(f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M')}")
         if st.button("🚪 Cerrar Sesión", use_container_width=True):
-            for k in ["authenticated","usuario","rol","nombre_usuario"]:
-                st.session_state[k] = False if k == "authenticated" else None
+            for k in list(st.session_state.keys()):
+                del st.session_state[k]
             st.rerun()
         st.markdown("---")
 
@@ -516,7 +566,8 @@ else:
             menu = st.radio("📋 MENÚ", [
                 "📊 Dashboard", "👥 Clientes", "📦 Insumos (Cajas)",
                 "🖥️ Equipos", "🔋 Baterías", "📋 Asignaciones",
-                "🛒 Ventas", "💳 Créditos", "📜 Historial", "📈 Reportes"
+                "🛒 Ventas", "💳 Créditos", "📜 Historial",
+                "📈 Reportes", "🔬 Análisis de Datos"
             ])
         else:
             menu = st.radio("📋 MENÚ", [
@@ -529,11 +580,11 @@ else:
     # ============================================================
     if menu == "📊 Dashboard" and ROL == "admin":
         st.title("📊 PANEL DE CONTROL")
-        
+
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1: st.metric("👥 CLIENTES", len(get_cached_clientes()))
         with col2: st.metric("📦 CAJAS", len(get_cached_inventario()))
-        with col3: 
+        with col3:
             ventas = cargar_ventas()
             st.metric("💳 VENTAS", f"${ventas['monto'].sum():,.0f}" if not ventas.empty else "$0")
         with col4:
@@ -543,11 +594,11 @@ else:
         with col5:
             baterias = cargar_baterias()
             st.metric("🔋 BATERÍAS", len(baterias[baterias["estado"] == "Disponible"]) if not baterias.empty else 0)
-        
+
         st.markdown("---")
         st.subheader("🔍 BUSCAR POR SERIAL")
         serial_buscar = st.text_input("Ingresa serial", placeholder="EQ-XXXXX / INS-XXXXX / BAT-XXXXX")
-        
+
         if st.button("🔍 Buscar", use_container_width=True):
             if serial_buscar:
                 resultado = buscar_por_serial(serial_buscar.strip().upper())
@@ -578,9 +629,9 @@ else:
     elif menu == "👥 Clientes" and ROL == "admin":
         st.title("👥 CLIENTES")
         clientes = get_cached_clientes(); asesores = get_cached_asesores()
-        
+
         tab1, tab2 = st.tabs(["📋 Ver", "➕ Agregar"])
-        
+
         with tab1:
             if not clientes.empty:
                 st.dataframe(clientes[["nombre","cedula","telefono","asesor"]], use_container_width=True, hide_index=True)
@@ -590,11 +641,11 @@ else:
                     sel = st.selectbox("Selecciona cliente para eliminar", clientes["nombre"].tolist())
                 with col2:
                     if st.button("🗑️ Eliminar", use_container_width=True):
-                        if eliminar_cliente(int(clientes[clientes["nombre"]==sel].iloc[0]["id"])): 
-                            st.success("✅ Eliminado"); st.cache_data.clear(); st.rerun()
-            else: 
+                        if eliminar_cliente(int(clientes[clientes["nombre"]==sel].iloc[0]["id"])):
+                            st.success("✅ Eliminado"); clear_all_cache(); st.rerun()
+            else:
                 st.info("📭 Sin clientes")
-        
+
         with tab2:
             col1, col2 = st.columns(2)
             with col1:
@@ -603,115 +654,188 @@ else:
             with col2:
                 cedula = st.text_input("Cédula")
                 asesor_sel = st.selectbox("Asesor", asesores)
-            
+
             if st.button("💾 Guardar", use_container_width=True):
                 if nombre and cedula:
-                    if guardar_cliente(nombre, cedula, telefono, asesor_sel): 
-                        st.success("✅ Agregado"); st.cache_data.clear(); st.rerun()
-                else: 
+                    if guardar_cliente(nombre, cedula, telefono, asesor_sel):
+                        st.success("✅ Agregado"); clear_all_cache(); st.rerun()
+                else:
                     st.error("❌ Completa nombre y cédula")
 
-    # ADMIN - INSUMOS (CAJAS)
+    # ============================================================
+    # ADMIN - INSUMOS (CAJAS) — con edición de nombre y items
+    # ============================================================
     elif menu == "📦 Insumos (Cajas)" and ROL == "admin":
         st.title("📦 CAJAS E ITEMS")
         inventario = get_cached_inventario()
-        
+
         tab1, tab2, tab3 = st.tabs(["📋 Ver Cajas", "➕ Nueva Caja", "📝 Gestionar Items"])
-        
+
+        # ── TAB 1: Ver Cajas ──
         with tab1:
             if not inventario.empty:
                 for idx, row in inventario.iterrows():
                     items = cargar_items_caja(int(row["id"]))
                     valor_total = calcular_valor_caja(items)
-                    
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    with col1:
-                        st.markdown(f"### 📦 {row['Caja']}")
-                    with col2:
-                        st.metric("Items", len(items))
-                    with col3:
-                        if st.button("🗑️", key=f"del_caja_{row['id']}", use_container_width=True):
-                            if eliminar_caja(int(row["id"])): 
-                                st.success("✅"); st.cache_data.clear(); st.rerun()
-                    
-                    if not items.empty:
-                        st.write(f"💰 **Valor Total:** ${valor_total:,.0f}")
-                        item_display = items[["nombre", "cantidad", "precio_unitario"]].copy()
-                        item_display["subtotal"] = (items["cantidad"] * items["precio_unitario"]).apply(lambda x: f"${x:,.0f}")
-                        item_display["cantidad"] = item_display["cantidad"].apply(lambda x: f"{x} uds")
-                        item_display["precio_unitario"] = item_display["precio_unitario"].apply(lambda x: f"${x:,.0f}")
-                        st.dataframe(item_display, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("ℹ️ Sin items")
-                    st.divider()
-            else: 
+
+                    with st.expander(f"📦 {row['Caja']} — {len(items)} items | ${valor_total:,.0f}"):
+                        # ✅ EDITAR NOMBRE DE CAJA
+                        col_nom, col_btn, col_del = st.columns([3, 1, 1])
+                        with col_nom:
+                            nuevo_nombre_caja = st.text_input(
+                                "Nombre de la caja",
+                                value=str(row["Caja"]),
+                                key=f"rename_caja_{row['id']}"
+                            )
+                        with col_btn:
+                            st.write("")
+                            st.write("")
+                            if st.button("✏️ Renombrar", key=f"btn_rename_{row['id']}", use_container_width=True):
+                                if nuevo_nombre_caja and nuevo_nombre_caja != row["Caja"]:
+                                    if renombrar_caja(int(row["id"]), nuevo_nombre_caja):
+                                        st.success("✅ Renombrada"); clear_all_cache(); st.rerun()
+                        with col_del:
+                            st.write("")
+                            st.write("")
+                            if st.button("🗑️ Eliminar", key=f"del_caja_{row['id']}", use_container_width=True):
+                                if eliminar_caja(int(row["id"])):
+                                    st.success("✅"); clear_all_cache(); st.rerun()
+
+                        if not items.empty:
+                            item_display = items[["nombre","descripcion","categoria","tipo_paciente","marca","cantidad","precio_unitario"]].copy()
+                            item_display["subtotal"] = (items["cantidad"] * items["precio_unitario"]).apply(lambda x: f"${x:,.0f}")
+                            item_display["cantidad"] = item_display["cantidad"].apply(lambda x: f"{x} uds")
+                            item_display["precio_unitario"] = item_display["precio_unitario"].apply(lambda x: f"${x:,.0f}")
+                            st.dataframe(item_display, use_container_width=True, hide_index=True)
+                        else:
+                            st.info("ℹ️ Sin items")
+            else:
                 st.info("📭 Sin cajas")
-        
+
+        # ── TAB 2: Nueva Caja ──
         with tab2:
-            caja_nombre = st.text_input("Nombre de la Caja", placeholder="Ej: Jeringas 10ml")
+            caja_nombre = st.text_input("Nombre de la Caja", placeholder="Ej: Sensores SpO2 Adulto")
             if st.button("💾 Crear Caja", use_container_width=True):
                 if caja_nombre:
                     ok, serial = guardar_caja_nueva(caja_nombre)
-                    if ok: 
+                    if ok:
                         st.success(f"✅ Caja '{caja_nombre}' creada")
                         st.info(f"📋 Serial: `{serial}`")
-                        st.cache_data.clear(); st.rerun()
-                else: 
+                        clear_all_cache(); st.rerun()
+                else:
                     st.error("❌ Ingresa nombre de caja")
-        
+
+        # ── TAB 3: Gestionar Items ──
         with tab3:
             st.subheader("📝 Agregar / Editar Items en Caja")
             if not inventario.empty:
                 caja_sel = st.selectbox("Selecciona Caja", inventario["Caja"].tolist())
                 caja_id = int(inventario[inventario["Caja"]==caja_sel].iloc[0]["id"])
                 items = cargar_items_caja(caja_id)
-                
+
                 st.markdown("---")
-                
+
                 if not items.empty:
                     st.markdown("**📋 Items Actuales:**")
                     for _, item in items.iterrows():
-                        col1, col2, col3, col4, col5, col6 = st.columns([2, 1.5, 0.8, 1.2, 1, 0.8])
-                        with col1: 
-                            st.write(f"**{item['nombre']}**")
-                        with col2: 
-                            st.write(f"{item['descripcion']}")
-                        with col3: 
-                            st.write(f"x{int(item['cantidad'])}")
-                        with col4:
-                            nuevo_precio = st.number_input(
-                                f"Precio {item['nombre']}", 
-                                value=int(item['precio_unitario']), 
-                                step=100,
-                                key=f"edit_price_{item['id']}"
-                            )
-                            if nuevo_precio != int(item['precio_unitario']):
-                                if actualizar_item_caja(int(item["id"]), {"precio_unitario": nuevo_precio}):
-                                    st.success("✅")
-                        with col5: 
-                            st.write(f"${int(item['cantidad'] * item['precio_unitario']):,.0f}")
-                        with col6:
-                            if st.button("🗑️", key=f"del_item_{item['id']}", use_container_width=True):
-                                if eliminar_item_caja(int(item["id"])): 
-                                    st.success("✅"); st.rerun()
+                        with st.expander(f"🔸 {item['nombre']} — x{int(item['cantidad'])} | ${int(item['precio_unitario']):,.0f} c/u"):
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                # ✅ EDITAR NOMBRE DE ITEM
+                                nuevo_nombre_item = st.text_input(
+                                    "Nombre",
+                                    value=str(item["nombre"]),
+                                    key=f"edit_nom_{item['id']}"
+                                )
+                                nueva_desc = st.text_input(
+                                    "Descripción",
+                                    value=str(item["descripcion"]),
+                                    key=f"edit_desc_{item['id']}"
+                                )
+                            with col2:
+                                nueva_cant = st.number_input(
+                                    "Cantidad",
+                                    value=int(item["cantidad"]),
+                                    min_value=0,
+                                    key=f"edit_cant_{item['id']}"
+                                )
+                                nuevo_precio = st.number_input(
+                                    "Precio Unitario",
+                                    value=int(item["precio_unitario"]),
+                                    step=100,
+                                    key=f"edit_price_{item['id']}"
+                                )
+                            with col3:
+                                # ✅ CAMPOS PARA ANÁLISIS
+                                cat_actual = item.get("categoria", "General")
+                                cat_idx = CATEGORIAS_ITEM.index(cat_actual) if cat_actual in CATEGORIAS_ITEM else 0
+                                nueva_cat = st.selectbox(
+                                    "Categoría",
+                                    CATEGORIAS_ITEM,
+                                    index=cat_idx,
+                                    key=f"edit_cat_{item['id']}"
+                                )
+                                tp_actual = item.get("tipo_paciente", "General")
+                                tp_idx = TIPOS_PACIENTE.index(tp_actual) if tp_actual in TIPOS_PACIENTE else 0
+                                nuevo_tp = st.selectbox(
+                                    "Tipo Paciente",
+                                    TIPOS_PACIENTE,
+                                    index=tp_idx,
+                                    key=f"edit_tp_{item['id']}"
+                                )
+                                marca_actual = item.get("marca", "Sin marca")
+                                marca_idx = MARCAS_COMUNES.index(marca_actual) if marca_actual in MARCAS_COMUNES else len(MARCAS_COMUNES)-1
+                                nueva_marca = st.selectbox(
+                                    "Marca",
+                                    MARCAS_COMUNES,
+                                    index=marca_idx,
+                                    key=f"edit_marca_{item['id']}"
+                                )
+
+                            col_save, col_del = st.columns(2)
+                            with col_save:
+                                if st.button("💾 Guardar Cambios", key=f"save_item_{item['id']}", use_container_width=True):
+                                    campos_upd = {
+                                        "nombre": nuevo_nombre_item,
+                                        "descripcion": nueva_desc,
+                                        "cantidad": int(nueva_cant),
+                                        "precio_unitario": int(nuevo_precio),
+                                        "categoria": nueva_cat,
+                                        "tipo_paciente": nuevo_tp,
+                                        "marca": nueva_marca
+                                    }
+                                    if actualizar_item_caja(int(item["id"]), campos_upd):
+                                        st.success("✅ Item actualizado"); st.rerun()
+                            with col_del:
+                                if st.button("🗑️ Eliminar", key=f"del_item_{item['id']}", use_container_width=True):
+                                    if eliminar_item_caja(int(item["id"])):
+                                        st.success("✅"); st.rerun()
+
                     st.markdown("---")
-                
+
                 st.markdown("**➕ Nuevo Item:**")
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
-                    item_nombre = st.text_input("Nombre Item", placeholder="Jeringa", key=f"item_nom_{caja_id}")
-                    item_cantidad = st.number_input("Cantidad", min_value=1, value=1, key=f"item_cant_{caja_id}")
+                    item_nombre = st.text_input("Nombre Item", placeholder="Sensor SpO2", key=f"item_nom_{caja_id}")
+                    item_desc = st.text_input("Descripción", placeholder="Adulto, reutilizable", key=f"item_desc_{caja_id}")
                 with col2:
-                    item_desc = st.text_input("Descripción", placeholder="10ml Luer Lock", key=f"item_desc_{caja_id}")
+                    item_cantidad = st.number_input("Cantidad", min_value=1, value=1, key=f"item_cant_{caja_id}")
                     item_precio = st.number_input("Precio Unitario ($)", min_value=0, value=1000, step=100, key=f"item_precio_{caja_id}")
-                
+                with col3:
+                    item_cat = st.selectbox("Categoría", CATEGORIAS_ITEM, key=f"item_cat_{caja_id}")
+                    item_tp = st.selectbox("Tipo Paciente", TIPOS_PACIENTE, key=f"item_tp_{caja_id}")
+                    item_marca = st.selectbox("Marca", MARCAS_COMUNES, key=f"item_marca_{caja_id}")
+
                 if st.button("💾 Agregar Item", use_container_width=True):
                     if item_nombre and item_precio > 0:
-                        ok, serial = guardar_item_caja(caja_id, item_nombre, item_desc, item_cantidad, item_precio)
-                        if ok: 
-                            st.success(f"✅ Item agregado")
-                            st.rerun()
-                    else: 
+                        ok, serial = guardar_item_caja(
+                            caja_id, item_nombre, item_desc,
+                            item_cantidad, item_precio,
+                            item_cat, item_tp, item_marca
+                        )
+                        if ok:
+                            st.success("✅ Item agregado"); st.rerun()
+                    else:
                         st.error("❌ Completa nombre y precio")
             else:
                 st.warning("⚠️ Crea una caja primero")
@@ -720,9 +844,9 @@ else:
     elif menu == "🖥️ Equipos" and ROL == "admin":
         st.title("🖥️ EQUIPOS")
         equipos = cargar_equipos(); asesores = get_cached_asesores()
-        
+
         tab1, tab2 = st.tabs(["📋 Ver", "➕ Agregar"])
-        
+
         with tab1:
             if not equipos.empty:
                 for _, row in equipos.iterrows():
@@ -733,28 +857,28 @@ else:
                             st.write(f"🧑‍💼 {row.get('Asesor_Asignado','')}")
                         with col2:
                             st.write(f"👤 {row.get('Cliente_Asignado','')}")
-                        
+
                         idx_e = ESTADOS_EQUIPO.index(row["Estado"]) if row["Estado"] in ESTADOS_EQUIPO else 0
                         ne = st.selectbox("Estado", ESTADOS_EQUIPO, index=idx_e, key=f"e_{row['id']}")
-                        
+
                         oa = [""]+asesores
                         ia = oa.index(row.get("Asesor_Asignado","")) if row.get("Asesor_Asignado","") in oa else 0
                         na = st.selectbox("Asesor", oa, index=ia, key=f"a_{row['id']}")
-                        
+
                         nc = st.text_input("Comentario", value=str(row.get("Comentarios","")), key=f"c_{row['id']}")
-                        
+
                         col_a, col_b = st.columns(2)
                         with col_a:
                             if st.button("💾 Actualizar", key=f"u_{row['id']}", use_container_width=True):
-                                if actualizar_equipo(int(row["id"]), {"Estado":ne,"Asesor_Asignado":na,"Comentarios":nc}): 
+                                if actualizar_equipo(int(row["id"]), {"Estado":ne,"Asesor_Asignado":na,"Comentarios":nc}):
                                     st.success("✅"); st.rerun()
                         with col_b:
                             if st.button("🗑️ Eliminar", key=f"d_{row['id']}", use_container_width=True):
-                                if eliminar_equipo(int(row["id"])): 
+                                if eliminar_equipo(int(row["id"])):
                                     st.success("✅"); st.rerun()
-            else: 
+            else:
                 st.info("📭 Sin equipos")
-        
+
         with tab2:
             col1, col2 = st.columns(2)
             with col1:
@@ -763,26 +887,26 @@ else:
             with col2:
                 pe2 = st.number_input("Precio ($)", min_value=0, value=0, step=1000)
                 ee2 = st.selectbox("Estado inicial", ESTADOS_EQUIPO)
-            
+
             ae2 = st.selectbox("Asesor asignado", [""] + asesores)
             ce2 = st.text_input("Cliente (opcional)")
-            
+
             if st.button("💾 Agregar Equipo", use_container_width=True):
                 if ne2:
                     sf = se2 if se2 else generar_serial("EQ")
                     ok, sr = guardar_equipo_nuevo({"Nombre":ne2,"Serial":sf,"Estado":ee2,"Precio":int(pe2),"Asesor_Asignado":ae2,"Cliente_Asignado":ce2})
-                    if ok: 
-                        st.success(f"✅ Equipo agregado"); 
+                    if ok:
+                        st.success("✅ Equipo agregado")
                         st.info(f"📋 Serial: `{sr}`")
                         st.rerun()
-                else: 
+                else:
                     st.error("❌ Ingresa nombre")
 
     # ADMIN - BATERÍAS
     elif menu == "🔋 Baterías" and ROL == "admin":
         st.title("🔋 BATERÍAS")
-        baterias = cargar_baterias(); equipos_lista = cargar_equipos()
-        
+        baterias = cargar_baterias()
+
         if not baterias.empty:
             col1, col2, col3, col4 = st.columns(4)
             with col1: st.metric("🔋 Total", len(baterias))
@@ -790,29 +914,29 @@ else:
             with col3: st.metric("🔵 En Uso", len(baterias[baterias["estado"]=="En uso"]))
             with col4: st.metric("🔴 Dañadas", len(baterias[baterias["estado"]=="Dañada"]))
             st.markdown("---")
-        
+
         tab1, tab2, tab3 = st.tabs(["📋 Ver", "➕ Agregar", "📊 Estadísticas"])
-        
+
         with tab1:
             if not baterias.empty:
                 fb_est = st.selectbox("Filtrar estado", ["Todos"]+ESTADOS_BATERIA)
                 bf = baterias.copy() if fb_est == "Todos" else baterias[baterias["estado"]==fb_est]
-                
+
                 for _, row in bf.iterrows():
                     eb = row.get("estado","")
                     with st.expander(f"{COLOR_BATERIA.get(eb,'⚪')} {row['nombre']} | {row['serial']}"):
                         st.write(f"🏭 **Proveedor:** {row.get('proveedor','')}")
                         st.write(f"💰 **Costo:** ${int(row.get('costo',0)):,.0f}")
-                        
+
                         idx_eb = ESTADOS_BATERIA.index(eb) if eb in ESTADOS_BATERIA else 0
                         neb = st.selectbox("Estado", ESTADOS_BATERIA, index=idx_eb, key=f"bst_{row['id']}")
-                        
+
                         if st.button("💾 Actualizar", key=f"bupd_{row['id']}", use_container_width=True):
-                            if actualizar_bateria(int(row["id"]), {"estado":neb}): 
+                            if actualizar_bateria(int(row["id"]), {"estado":neb}):
                                 st.success("✅"); st.rerun()
-            else: 
+            else:
                 st.info("📭 Sin baterías")
-        
+
         with tab2:
             col1, col2 = st.columns(2)
             with col1:
@@ -821,17 +945,17 @@ else:
             with col2:
                 nb_costo = st.number_input("Costo ($)", min_value=0, value=0, step=1000)
                 nb_estado = st.selectbox("Estado", ESTADOS_BATERIA)
-            
+
             if st.button("💾 Registrar", use_container_width=True):
                 if nb_nombre and nb_proveedor:
                     ok, sb = guardar_bateria(nb_nombre, nb_proveedor, datetime.now().date(), 0, nb_costo, nb_estado, "", "", "")
-                    if ok: 
-                        st.success(f"✅ Batería registrada"); 
+                    if ok:
+                        st.success("✅ Batería registrada")
                         st.info(f"📋 Serial: `{sb}`")
                         st.rerun()
-                else: 
+                else:
                     st.error("❌ Completa todos")
-        
+
         with tab3:
             if not baterias.empty:
                 st.subheader("📊 Distribución")
@@ -843,9 +967,9 @@ else:
     elif menu == "📋 Asignaciones" and ROL == "admin":
         st.title("📋 ASIGNACIONES")
         asesores = get_cached_asesores(); inventario = get_cached_inventario()
-        
+
         tab1, tab2 = st.tabs(["📋 Ver", "➕ Nueva"])
-        
+
         with tab1:
             asignaciones = cargar_asignaciones()
             if not asignaciones.empty:
@@ -860,11 +984,11 @@ else:
                                         supabase = get_supabase_client()
                                         supabase.table("asignaciones").delete().eq("id",int(arow["id"])).execute()
                                         st.success("✅"); st.rerun()
-                                    except Exception as e: 
+                                    except Exception as e:
                                         st.error(f"❌ {e}")
-            else: 
+            else:
                 st.info("📭 Sin asignaciones")
-        
+
         with tab2:
             if not inventario.empty:
                 col1, col2, col3 = st.columns(3)
@@ -873,43 +997,43 @@ else:
                 with col3:
                     disp = int(inventario[inventario["Caja"]==cs].iloc[0]["Cantidad"])
                     st.metric("Disponible", disp)
-                
+
                 ca2 = st.number_input("Cantidad", min_value=1, max_value=max(disp, 1), value=1)
                 fa2 = st.date_input("Fecha")
-                
+
                 if st.button("📋 Asignar", use_container_width=True):
                     if ca2 <= disp:
                         row_c = inventario[inventario["Caja"]==cs].iloc[0]
                         actualizar_caja(int(row_c["id"]), {"Cantidad":disp-ca2})
-                        if guardar_asignacion(ad, cs, ca2, fa2): 
+                        if guardar_asignacion(ad, cs, ca2, fa2):
                             st.success("✅"); st.rerun()
-                    else: 
+                    else:
                         st.error("❌ Stock insuficiente")
-            else: 
+            else:
                 st.error("❌ Sin cajas")
 
     # ADMIN - VENTAS
     elif menu == "🛒 Ventas" and ROL == "admin":
         st.title("🛒 VENTAS")
         inventario = get_cached_inventario(); clientes = get_cached_clientes(); asesores = get_cached_asesores()
-        
+
         tab1, tab2 = st.tabs(["➕ Nueva", "📋 Historial"])
-        
+
         with tab1:
             col1, col2 = st.columns(2)
             with col1: fecha = st.date_input("Fecha")
             with col2: av = st.selectbox("Asesor", asesores)
-            
+
             cli_f = clientes[clientes["asesor"]==av] if not clientes.empty else pd.DataFrame()
             lcli = cli_f["nombre"].tolist() if not cli_f.empty else []
             cv = st.selectbox("Cliente", lcli if lcli else ["Sin clientes"])
-            
+
             col3, col4 = st.columns(2)
             with col3: cajav = st.selectbox("Caja", inventario["Caja"].tolist() if not inventario.empty else ["Sin cajas"])
             with col4:
-                if not inventario.empty and cajav != "Sin cajas": 
+                if not inventario.empty and cajav != "Sin cajas":
                     st.metric("Disponible", int(inventario[inventario["Caja"]==cajav].iloc[0]["Cantidad"]))
-            
+
             col5, col6 = st.columns(2)
             with col5: cantv = st.number_input("Cantidad", min_value=1, value=1)
             with col6:
@@ -919,26 +1043,26 @@ else:
                     items = cargar_items_caja(caja_id)
                     valu = int((items["precio_unitario"].mean())) if not items.empty else 0
                 st.metric("Precio Unitario", f"${valu:,.0f}")
-            
+
             montov = cantv * valu
             st.metric("Monto Total", f"${montov:,.0f}")
             ecv = st.checkbox("Venta a Crédito")
-            
+
             if st.button("💾 Guardar Venta", use_container_width=True):
                 if cv != "Sin clientes" and cajav != "Sin cajas":
                     crow = inventario[inventario["Caja"]==cajav].iloc[0]
                     nc = int(crow["Cantidad"])-cantv
-                    if nc < 0: 
+                    if nc < 0:
                         st.error("❌ Stock insuficiente")
                     else:
                         actualizar_caja(int(crow["id"]), {"Cantidad":nc})
                         guardar_venta(fecha, cv, cajav, cantv, valu, montov, ecv, av)
-                        if ecv: 
+                        if ecv:
                             guardar_credito(cv, montov, fecha, av)
                         st.success("✅ Venta guardada"); st.rerun()
-                else: 
+                else:
                     st.error("❌ Completa campos")
-        
+
         with tab2:
             ventas = cargar_ventas()
             if not ventas.empty:
@@ -946,28 +1070,28 @@ else:
                 vd["fecha"] = pd.to_datetime(vd["fecha"], errors="coerce").dt.strftime("%d/%m/%Y")
                 vd["monto"] = vd["monto"].apply(lambda x: f"${x:,.0f}")
                 st.dataframe(vd, use_container_width=True, hide_index=True)
-            else: 
+            else:
                 st.info("📭 Sin ventas")
 
     # ADMIN - CRÉDITOS
     elif menu == "💳 Créditos" and ROL == "admin":
         st.title("💳 CRÉDITOS")
         creditos = cargar_creditos(); asesores_cred = get_cached_asesores()
-        
+
         if not creditos.empty:
             pend = creditos[creditos["pagado"]==False]
             col1, col2, col3 = st.columns(3)
             with col1: st.metric("💳 PENDIENTE", f"${pend['monto'].sum():,.0f}")
             with col2: st.metric("👥 CLIENTES", pend["cliente"].nunique())
             with col3: st.metric("📋 REGISTROS", len(pend))
-            
+
             st.markdown("---")
             filtro_ac = st.selectbox("Filtrar por asesor", ["Todos"]+asesores_cred)
-            
+
             for ac in (asesores_cred if filtro_ac=="Todos" else [filtro_ac]):
                 ca = creditos[creditos["asesor"]==ac]
                 if ca.empty: continue
-                
+
                 with st.expander(f"🧑‍💼 {ac}"):
                     for _, row in ca.iterrows():
                         col1, col2, col3, col4 = st.columns([2, 1.5, 1.5, 1])
@@ -979,34 +1103,65 @@ else:
                         with col4:
                             if not row["pagado"]:
                                 if st.button("✓", key=f"p_{row['id']}", use_container_width=True):
-                                    if marcar_credito_pagado(int(row["id"])): 
+                                    if marcar_credito_pagado(int(row["id"])):
                                         st.success("✅"); st.rerun()
-        else: 
+        else:
             st.info("✅ Sin créditos")
 
-    # ADMIN - HISTORIAL
+    # ============================================================
+    # ADMIN - HISTORIAL  ✅ sin créditos
+    # ============================================================
     elif menu == "📜 Historial" and ROL == "admin":
-        st.title("📜 HISTORIAL")
+        st.title("📜 HISTORIAL DE MOVIMIENTOS")
+        st.caption("Solo muestra asignaciones y ventas. Los créditos tienen su propio módulo.")
+
         historial = cargar_historial_asignaciones()
-        
+
         if not historial.empty:
-            st.metric("Total registros", len(historial))
-            st.dataframe(historial[["fecha","asesor","tipo","cantidad"]].tail(20), use_container_width=True, hide_index=True)
-        else: 
-            st.info("📭 Sin registros")
+            col1, col2, col3 = st.columns(3)
+            with col1: st.metric("Total registros", len(historial))
+            with col2:
+                ventas_h = historial[historial["tipo"]=="venta"]
+                st.metric("Ventas registradas", len(ventas_h))
+            with col3:
+                asig_h = historial[historial["tipo"]=="asignacion"]
+                st.metric("Asignaciones", len(asig_h))
+
+            st.markdown("---")
+
+            # Filtros
+            col_f1, col_f2, col_f3 = st.columns(3)
+            with col_f1:
+                tipos_disp = ["Todos"] + historial["tipo"].unique().tolist()
+                filtro_tipo = st.selectbox("Filtrar por tipo", tipos_disp)
+            with col_f2:
+                asesores_disp = ["Todos"] + historial["asesor"].unique().tolist()
+                filtro_asesor_h = st.selectbox("Filtrar por asesor", asesores_disp)
+            with col_f3:
+                n_registros = st.selectbox("Mostrar últimos", [20, 50, 100, 200], index=0)
+
+            hf = historial.copy()
+            if filtro_tipo != "Todos": hf = hf[hf["tipo"]==filtro_tipo]
+            if filtro_asesor_h != "Todos": hf = hf[hf["asesor"]==filtro_asesor_h]
+
+            hf_show = hf.head(n_registros)[["fecha","asesor","tipo","caja","cantidad","nota"]].copy()
+            hf_show["fecha"] = hf_show["fecha"].dt.strftime("%d/%m/%Y %H:%M")
+            st.dataframe(hf_show, use_container_width=True, hide_index=True)
+        else:
+            st.info("📭 Sin registros de movimientos")
 
     # ADMIN - REPORTES
     elif menu == "📈 Reportes" and ROL == "admin":
         st.title("📈 REPORTES")
         ventas = cargar_ventas()
-        
+
         if not ventas.empty:
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Ventas Totales", f"${ventas['monto'].sum():,.0f}")
             with col2:
                 st.metric("Número de Ventas", len(ventas))
-            
+
             st.markdown("---")
             st.subheader("Ventas por Asesor")
             va = ventas.groupby("asesor")["monto"].sum().reset_index()
@@ -1014,16 +1169,219 @@ else:
             st.plotly_chart(fig, use_container_width=True)
 
     # ============================================================
+    # ✅ NUEVO — ANÁLISIS DE DATOS
+    # ============================================================
+    elif menu == "🔬 Análisis de Datos" and ROL == "admin":
+        st.title("🔬 ANÁLISIS DE DATOS — INVENTARIO")
+        st.caption("Agrupaciones y filtros sobre todos los items del inventario")
+
+        todos_items = cargar_todos_los_items()
+
+        if todos_items.empty:
+            st.warning("⚠️ No hay items con categorías asignadas. Ve a Insumos → Gestionar Items y asigna categoría, tipo de paciente y marca.")
+        else:
+            # ── Métricas globales ──
+            col1, col2, col3, col4 = st.columns(4)
+            with col1: st.metric("📦 Total Items", len(todos_items))
+            with col2: st.metric("🔢 Total Unidades", int(todos_items["cantidad"].sum()))
+            with col3: st.metric("💰 Valor Total", f"${todos_items['subtotal'].sum():,.0f}")
+            with col4:
+                cats_unicas = todos_items["categoria"].nunique()
+                st.metric("🗂️ Categorías", cats_unicas)
+
+            st.markdown("---")
+
+            # ── Filtros ──
+            st.subheader("🔽 Filtros")
+            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+            with col_f1:
+                texto_busq = st.text_input("🔍 Buscar por nombre", placeholder="Sensor, Electrodo...")
+            with col_f2:
+                cats_disp = ["Todas"] + sorted(todos_items["categoria"].dropna().unique().tolist())
+                filtro_cat = st.selectbox("Categoría", cats_disp)
+            with col_f3:
+                tp_disp = ["Todos"] + sorted(todos_items["tipo_paciente"].dropna().unique().tolist())
+                filtro_tp = st.selectbox("Tipo Paciente", tp_disp)
+            with col_f4:
+                marcas_disp = ["Todas"] + sorted(todos_items["marca"].dropna().unique().tolist())
+                filtro_marca = st.selectbox("Marca", marcas_disp)
+
+            # Aplicar filtros
+            df_f = todos_items.copy()
+            if texto_busq:
+                df_f = df_f[df_f["nombre"].str.contains(texto_busq, case=False, na=False)]
+            if filtro_cat != "Todas":
+                df_f = df_f[df_f["categoria"] == filtro_cat]
+            if filtro_tp != "Todos":
+                df_f = df_f[df_f["tipo_paciente"] == filtro_tp]
+            if filtro_marca != "Todas":
+                df_f = df_f[df_f["marca"] == filtro_marca]
+
+            st.markdown("---")
+
+            # ── Tabla resumen filtrada ──
+            st.subheader(f"📋 Resultados ({len(df_f)} items)")
+            if not df_f.empty:
+                col_m1, col_m2 = st.columns(2)
+                with col_m1: st.metric("Unidades filtradas", int(df_f["cantidad"].sum()))
+                with col_m2: st.metric("Valor filtrado", f"${df_f['subtotal'].sum():,.0f}")
+
+                tabla = df_f[["nombre_caja","nombre","categoria","tipo_paciente","marca","cantidad","precio_unitario","subtotal"]].copy()
+                tabla["precio_unitario"] = tabla["precio_unitario"].apply(lambda x: f"${x:,.0f}")
+                tabla["subtotal"] = tabla["subtotal"].apply(lambda x: f"${x:,.0f}")
+                st.dataframe(tabla, use_container_width=True, hide_index=True)
+            else:
+                st.info("📭 Sin resultados para ese filtro")
+
+            st.markdown("---")
+
+            # ── Gráficas de análisis ──
+            st.subheader("📊 Visualizaciones")
+
+            chart_tab1, chart_tab2, chart_tab3, chart_tab4 = st.tabs([
+                "Por Categoría", "Por Tipo Paciente", "Por Marca", "Por Caja"
+            ])
+
+            with chart_tab1:
+                if not df_f.empty:
+                    agg_cat = df_f.groupby("categoria").agg(
+                        unidades=("cantidad","sum"),
+                        valor=("subtotal","sum"),
+                        items=("nombre","count")
+                    ).reset_index().sort_values("valor", ascending=False)
+
+                    col_g1, col_g2 = st.columns(2)
+                    with col_g1:
+                        fig1 = px.bar(agg_cat, x="categoria", y="unidades",
+                                      title="Unidades por Categoría",
+                                      color="categoria", text="unidades")
+                        fig1.update_traces(textposition="outside")
+                        st.plotly_chart(fig1, use_container_width=True)
+                    with col_g2:
+                        fig2 = px.pie(agg_cat, values="valor", names="categoria",
+                                      title="Valor por Categoría")
+                        st.plotly_chart(fig2, use_container_width=True)
+
+                    st.dataframe(agg_cat, use_container_width=True, hide_index=True)
+
+            with chart_tab2:
+                if not df_f.empty:
+                    agg_tp = df_f.groupby("tipo_paciente").agg(
+                        unidades=("cantidad","sum"),
+                        valor=("subtotal","sum"),
+                        items=("nombre","count")
+                    ).reset_index().sort_values("unidades", ascending=False)
+
+                    col_g1, col_g2 = st.columns(2)
+                    with col_g1:
+                        fig3 = px.bar(agg_tp, x="tipo_paciente", y="unidades",
+                                      title="Unidades por Tipo de Paciente",
+                                      color="tipo_paciente",
+                                      color_discrete_map={
+                                          "Adulto": "#2196F3",
+                                          "Pediátrico": "#4CAF50",
+                                          "Neonatal": "#FF9800",
+                                          "General": "#9E9E9E"
+                                      })
+                        st.plotly_chart(fig3, use_container_width=True)
+                    with col_g2:
+                        fig4 = px.pie(agg_tp, values="valor", names="tipo_paciente",
+                                      title="Valor por Tipo de Paciente")
+                        st.plotly_chart(fig4, use_container_width=True)
+
+                    st.dataframe(agg_tp, use_container_width=True, hide_index=True)
+
+            with chart_tab3:
+                if not df_f.empty:
+                    agg_marca = df_f.groupby("marca").agg(
+                        unidades=("cantidad","sum"),
+                        valor=("subtotal","sum"),
+                        items=("nombre","count")
+                    ).reset_index().sort_values("valor", ascending=False)
+
+                    col_g1, col_g2 = st.columns(2)
+                    with col_g1:
+                        fig5 = px.bar(agg_marca, x="marca", y="valor",
+                                      title="Valor de Inventario por Marca",
+                                      color="marca", text_auto=True)
+                        st.plotly_chart(fig5, use_container_width=True)
+                    with col_g2:
+                        fig6 = px.bar(agg_marca, x="marca", y="unidades",
+                                      title="Unidades por Marca",
+                                      color="marca")
+                        st.plotly_chart(fig6, use_container_width=True)
+
+                    st.dataframe(agg_marca, use_container_width=True, hide_index=True)
+
+            with chart_tab4:
+                if not df_f.empty:
+                    agg_caja = df_f.groupby("nombre_caja").agg(
+                        unidades=("cantidad","sum"),
+                        valor=("subtotal","sum"),
+                        items=("nombre","count")
+                    ).reset_index().sort_values("valor", ascending=False)
+
+                    fig7 = px.bar(agg_caja, x="nombre_caja", y="valor",
+                                  title="Valor Total por Caja",
+                                  color="valor", color_continuous_scale="Teal",
+                                  text_auto=True)
+                    fig7.update_layout(xaxis_tickangle=-30)
+                    st.plotly_chart(fig7, use_container_width=True)
+
+                    st.dataframe(agg_caja, use_container_width=True, hide_index=True)
+
+            # ── Agrupación por prefijo de nombre ──
+            st.markdown("---")
+            st.subheader("🔤 Agrupar por Prefijo de Nombre")
+            st.caption("Útil para sumar todos los items que empiecen igual, ej: 'Sensor', 'Electrodo', 'Cable'")
+
+            prefijo_input = st.text_input("Ingresa prefijo a buscar", placeholder="Sensor")
+            if prefijo_input:
+                df_prefijo = todos_items[todos_items["nombre"].str.lower().str.startswith(prefijo_input.lower())]
+                if not df_prefijo.empty:
+                    st.success(f"✅ {len(df_prefijo)} items encontrados con prefijo **'{prefijo_input}'**")
+
+                    col_p1, col_p2, col_p3 = st.columns(3)
+                    with col_p1: st.metric("Total Unidades", int(df_prefijo["cantidad"].sum()))
+                    with col_p2: st.metric("Valor Total", f"${df_prefijo['subtotal'].sum():,.0f}")
+                    with col_p3: st.metric("Variantes", len(df_prefijo))
+
+                    # Desglose por marca
+                    st.markdown("**Por Marca:**")
+                    agg_p_marca = df_prefijo.groupby("marca").agg(
+                        unidades=("cantidad","sum"),
+                        valor=("subtotal","sum")
+                    ).reset_index().sort_values("unidades", ascending=False)
+                    st.dataframe(agg_p_marca, use_container_width=True, hide_index=True)
+
+                    # Desglose por tipo paciente
+                    st.markdown("**Por Tipo de Paciente:**")
+                    agg_p_tp = df_prefijo.groupby("tipo_paciente").agg(
+                        unidades=("cantidad","sum"),
+                        valor=("subtotal","sum")
+                    ).reset_index().sort_values("unidades", ascending=False)
+                    st.dataframe(agg_p_tp, use_container_width=True, hide_index=True)
+
+                    # Tabla completa
+                    st.markdown("**Detalle completo:**")
+                    det = df_prefijo[["nombre_caja","nombre","marca","tipo_paciente","cantidad","precio_unitario","subtotal"]].copy()
+                    det["precio_unitario"] = det["precio_unitario"].apply(lambda x: f"${x:,.0f}")
+                    det["subtotal"] = det["subtotal"].apply(lambda x: f"${x:,.0f}")
+                    st.dataframe(det, use_container_width=True, hide_index=True)
+                else:
+                    st.warning(f"⚠️ Ningún item empieza con '{prefijo_input}'")
+
+    # ============================================================
     # ASESOR - MI RESUMEN
     # ============================================================
     elif menu == "📊 Mi Resumen" and ROL == "asesor":
-        st.title(f"📊 MI RESUMEN")
-        
+        st.title("📊 MI RESUMEN")
+
         mv = cargar_ventas(asesor=USUARIO)
         mc = cargar_creditos(asesor=USUARIO)
         mcli = cargar_clientes(asesor=USUARIO)
         pend = mc[mc["pagado"]==False] if not mc.empty else pd.DataFrame()
-        
+
         col1, col2, col3 = st.columns(3)
         with col1: st.metric("👥 MIS CLIENTES", len(mcli))
         with col2: st.metric("💳 MIS VENTAS", f"${mv['monto'].sum():,.0f}" if not mv.empty else "$0")
@@ -1033,73 +1391,73 @@ else:
     elif menu == "👥 Mis Clientes" and ROL == "asesor":
         st.title("👥 MIS CLIENTES")
         mc = cargar_clientes(asesor=USUARIO)
-        
+
         tab1, tab2 = st.tabs(["📋 Ver", "➕ Agregar"])
-        
+
         with tab1:
-            if not mc.empty: 
+            if not mc.empty:
                 st.dataframe(mc[["nombre","cedula","telefono"]], use_container_width=True, hide_index=True)
-            else: 
+            else:
                 st.info("📭 Sin clientes")
-        
+
         with tab2:
             nombre = st.text_input("Nombre")
             col1, col2 = st.columns(2)
             with col1: cedula = st.text_input("Cédula")
             with col2: telefono = st.text_input("Teléfono")
-            
+
             if st.button("💾 Guardar", use_container_width=True):
                 if nombre and cedula:
-                    if guardar_cliente(nombre, cedula, telefono, USUARIO): 
+                    if guardar_cliente(nombre, cedula, telefono, USUARIO):
                         st.success("✅"); st.rerun()
-                else: 
+                else:
                     st.error("❌ Completa campos")
 
     # ASESOR - MIS INSUMOS
     elif menu == "📦 Mis Insumos" and ROL == "asesor":
         st.title("📦 MIS INSUMOS")
         ma = cargar_asignaciones(asesor=USUARIO)
-        
+
         if not ma.empty:
             st.metric("Total unidades", int(ma["cantidad"].sum()))
             st.dataframe(ma[["caja","cantidad","fecha"]], use_container_width=True, hide_index=True)
-        else: 
+        else:
             st.info("📭 Sin insumos")
 
     # ASESOR - MIS EQUIPOS
     elif menu == "🖥️ Mis Equipos" and ROL == "asesor":
         st.title("🖥️ MIS EQUIPOS")
         me = cargar_equipos(asesor=USUARIO)
-        
+
         if not me.empty:
             for _, row in me.iterrows():
                 with st.expander(f"{COLOR_ESTADO.get(row['Estado'],'⚪')} {row['Nombre']}"):
                     st.write(f"💰 ${int(row.get('Precio',0)):,.0f}")
                     st.write(f"👤 {row.get('Cliente_Asignado','')}")
-        else: 
+        else:
             st.info("📭 Sin equipos")
 
     # ASESOR - REGISTRAR VENTA
     elif menu == "🛒 Registrar Venta" and ROL == "asesor":
         st.title("🛒 REGISTRAR VENTA")
-        
+
         mcli = cargar_clientes(asesor=USUARIO)
         ma = cargar_asignaciones(asesor=USUARIO)
         inventario = get_cached_inventario()
-        
+
         col1, col2 = st.columns(2)
         with col1: fecha = st.date_input("Fecha")
         with col2:
             lcli = mcli["nombre"].tolist() if not mcli.empty else []
             cv = st.selectbox("Cliente", lcli if lcli else ["Sin clientes"])
-        
+
         cajas_d = ma["caja"].unique().tolist() if not ma.empty else []
         col3, col4 = st.columns(2)
         with col3: cajav = st.selectbox("Caja", cajas_d if cajas_d else ["Sin cajas"])
         with col4:
             if cajas_d and not inventario.empty and cajav in inventario["Caja"].values:
                 st.metric("Stock", int(inventario[inventario["Caja"]==cajav].iloc[0]["Cantidad"]))
-        
+
         col5, col6 = st.columns(2)
         with col5: cantv = st.number_input("Cantidad", min_value=1, value=1)
         with col6:
@@ -1109,37 +1467,37 @@ else:
                 items = cargar_items_caja(caja_id)
                 valu = int((items["precio_unitario"].mean())) if not items.empty else 0
             st.metric("Precio", f"${valu:,.0f}")
-        
+
         montov = cantv * valu
         st.metric("Total", f"${montov:,.0f}")
         ecv = st.checkbox("Venta a Crédito")
-        
+
         if st.button("💾 Guardar", use_container_width=True):
             if cv != "Sin clientes" and cajav != "Sin cajas":
                 crow = inventario[inventario["Caja"]==cajav].iloc[0]
                 nc = int(crow["Cantidad"]) - cantv
-                if nc < 0: 
+                if nc < 0:
                     st.error("❌ Stock insuficiente")
                 else:
                     actualizar_caja(int(crow["id"]), {"Cantidad":nc})
                     guardar_venta(fecha, cv, cajav, cantv, valu, montov, ecv, USUARIO)
-                    if ecv: 
+                    if ecv:
                         guardar_credito(cv, montov, fecha, USUARIO)
                     st.success("✅ Venta registrada"); st.rerun()
-            else: 
+            else:
                 st.error("❌ Completa campos")
 
     # ASESOR - MIS CRÉDITOS
     elif menu == "💳 Mis Créditos" and ROL == "asesor":
         st.title("💳 MIS CRÉDITOS")
         mc = cargar_creditos(asesor=USUARIO)
-        
+
         if not mc.empty:
             pend = mc[mc["pagado"]==False]
             col1, col2 = st.columns(2)
             with col1: st.metric("PENDIENTE", f"${pend['monto'].sum():,.0f}" if not pend.empty else "$0")
             with col2: st.metric("REGISTROS", len(pend))
-            
+
             for _, row in mc.iterrows():
                 col1, col2, col3, col4 = st.columns([2, 1.5, 1.5, 1])
                 with col1: st.write(f"👤 {row['cliente']}")
@@ -1150,7 +1508,7 @@ else:
                 with col4:
                     if not row["pagado"]:
                         if st.button("✓", key=f"pa_{row['id']}", use_container_width=True):
-                            if marcar_credito_pagado(int(row["id"])): 
+                            if marcar_credito_pagado(int(row["id"])):
                                 st.success("✅"); st.rerun()
-        else: 
+        else:
             st.info("✅ Sin créditos")
