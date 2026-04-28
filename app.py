@@ -40,10 +40,6 @@ ESTADOS_BATERIA = ["Disponible", "En uso", "Dañada", "En mantenimiento", "Baja 
 COLOR_BATERIA = {"Disponible": "🟢", "En uso": "🔵", "Dañada": "🔴", "En mantenimiento": "🟡", "Baja de inventario": "⚫"}
 
 # Categorías para análisis de datos
-CATEGORIAS_ITEM = ["General", "Sensores", "Electrodos", "Cables", "Consumibles", "Repuestos", "Accesorios", "Otros"]
-TIPOS_PACIENTE = ["General", "Adulto", "Pediátrico", "Neonatal"]
-MARCAS_COMUNES = ["Sin marca", "Philips", "GE", "Mindray", "Nihon Kohden", "Spacelabs", "Masimo", "Nellcor", "Covidien", "Otras"]
-
 def generar_serial(prefijo="SM"):
     chars = string.ascii_uppercase + string.digits
     return f"{prefijo}-{''.join(random.choices(chars, k=6))}"
@@ -201,31 +197,7 @@ def cargar_items_caja(caja_id):
         st.error(f"❌ Error cargando items: {e}")
         return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item","categoria","tipo_paciente","marca"])
 
-def cargar_todos_los_items():
-    """Carga todos los items de todas las cajas para análisis global"""
-    try:
-        supabase = get_supabase_client()
-        resp = supabase.table("items_caja").select("*, inventario(Caja)").execute()
-        if resp.data:
-            df = pd.DataFrame(resp.data)
-            # Extraer nombre de caja del join
-            if "inventario" in df.columns:
-                df["nombre_caja"] = df["inventario"].apply(
-                    lambda x: x.get("Caja", "") if isinstance(x, dict) else ""
-                )
-                df = df.drop(columns=["inventario"])
-            for col in ["nombre","descripcion","categoria","tipo_paciente","marca","nombre_caja"]:
-                if col not in df.columns: df[col] = ""
-            for col in ["cantidad","precio_unitario"]:
-                if col not in df.columns: df[col] = 0
-            df["subtotal"] = df["cantidad"] * df["precio_unitario"]
-            return df
-        return pd.DataFrame()
-    except Exception as e:
-        st.error(f"❌ Error cargando items globales: {e}")
-        return pd.DataFrame()
-
-def guardar_item_caja(caja_id, nombre, descripcion, cantidad, precio_unitario, categoria="General", tipo_paciente="General", marca="Sin marca"):
+def guardar_item_caja(caja_id, nombre, descripcion, cantidad, precio_unitario):
     try:
         supabase = get_supabase_client()
         serial_item = generar_serial("ITM")
@@ -235,10 +207,7 @@ def guardar_item_caja(caja_id, nombre, descripcion, cantidad, precio_unitario, c
             "descripcion": descripcion,
             "cantidad": int(cantidad),
             "precio_unitario": int(precio_unitario),
-            "serial_item": serial_item,
-            "categoria": categoria,
-            "tipo_paciente": tipo_paciente,
-            "marca": marca
+            "serial_item": serial_item
         }).execute()
         return True, serial_item
     except Exception as e:
@@ -567,7 +536,7 @@ else:
                 "📊 Dashboard", "👥 Clientes", "📦 Insumos (Cajas)",
                 "🖥️ Equipos", "🔋 Baterías", "📋 Asignaciones",
                 "🛒 Ventas", "💳 Créditos", "📜 Historial",
-                "📈 Reportes", "🔬 Análisis de Datos"
+                "📈 Reportes"
             ])
         else:
             menu = st.radio("📋 MENÚ", [
@@ -669,46 +638,88 @@ else:
         st.title("📦 CAJAS E ITEMS")
         inventario = get_cached_inventario()
 
-        tab1, tab2, tab3 = st.tabs(["📋 Ver Cajas", "➕ Nueva Caja", "📝 Gestionar Items"])
+        tab1, tab2, tab3 = st.tabs(["🔍 Buscar Items", "➕ Nueva Caja", "📝 Gestionar Items"])
 
-        # ── TAB 1: Ver Cajas ──
+        # ── TAB 1: Búsqueda global de items ──
         with tab1:
+            st.subheader("🔍 Buscar en todo el inventario")
+            busq = st.text_input(
+                "Buscar por nombre o referencia (serial)",
+                placeholder="Ej: sensor, SPO2, ITM-ABC123...",
+                key="busq_items_global"
+            )
+
             if not inventario.empty:
-                for idx, row in inventario.iterrows():
-                    items = cargar_items_caja(int(row["id"]))
-                    valor_total = calcular_valor_caja(items)
+                # Cargar todos los items de todas las cajas
+                todos = []
+                for _, row_inv in inventario.iterrows():
+                    its = cargar_items_caja(int(row_inv["id"]))
+                    if not its.empty:
+                        its = its.copy()
+                        its["nombre_caja"] = row_inv["Caja"]
+                        todos.append(its)
 
-                    with st.expander(f"📦 {row['Caja']} — {len(items)} items | ${valor_total:,.0f}"):
-                        # ✅ EDITAR NOMBRE DE CAJA
-                        col_nom, col_btn, col_del = st.columns([3, 1, 1])
-                        with col_nom:
-                            nuevo_nombre_caja = st.text_input(
-                                "Nombre de la caja",
-                                value=str(row["Caja"]),
-                                key=f"rename_caja_{row['id']}"
+                if todos:
+                    df_todos = pd.concat(todos, ignore_index=True)
+
+                    # Búsqueda insensible a mayúsculas/minúsculas y tildes normalizadas
+                    if busq.strip():
+                        import unicodedata
+                        def normalizar(s):
+                            s = str(s).lower()
+                            return ''.join(
+                                c for c in unicodedata.normalize('NFD', s)
+                                if unicodedata.category(c) != 'Mn'
                             )
-                        with col_btn:
-                            st.write("")
-                            st.write("")
-                            if st.button("✏️ Renombrar", key=f"btn_rename_{row['id']}", use_container_width=True):
-                                if nuevo_nombre_caja and nuevo_nombre_caja != row["Caja"]:
-                                    if renombrar_caja(int(row["id"]), nuevo_nombre_caja):
-                                        st.success("✅ Renombrada"); clear_all_cache(); st.rerun()
-                        with col_del:
-                            st.write("")
-                            st.write("")
-                            if st.button("🗑️ Eliminar", key=f"del_caja_{row['id']}", use_container_width=True):
-                                if eliminar_caja(int(row["id"])):
-                                    st.success("✅"); clear_all_cache(); st.rerun()
+                        busq_norm = normalizar(busq)
+                        mask = (
+                            df_todos["nombre"].apply(normalizar).str.contains(busq_norm, na=False) |
+                            df_todos["descripcion"].apply(normalizar).str.contains(busq_norm, na=False) |
+                            df_todos.get("serial_item", pd.Series([""] * len(df_todos))).apply(normalizar).str.contains(busq_norm, na=False)
+                        )
+                        df_result = df_todos[mask]
+                    else:
+                        df_result = df_todos
 
-                        if not items.empty:
-                            item_display = items[["nombre","descripcion","categoria","tipo_paciente","marca","cantidad","precio_unitario"]].copy()
-                            item_display["subtotal"] = (items["cantidad"] * items["precio_unitario"]).apply(lambda x: f"${x:,.0f}")
-                            item_display["cantidad"] = item_display["cantidad"].apply(lambda x: f"{x} uds")
-                            item_display["precio_unitario"] = item_display["precio_unitario"].apply(lambda x: f"${x:,.0f}")
-                            st.dataframe(item_display, use_container_width=True, hide_index=True)
-                        else:
-                            st.info("ℹ️ Sin items")
+                    st.caption(f"{'🔎 ' + str(len(df_result)) + ' resultado(s) encontrado(s)' if busq.strip() else str(len(df_result)) + ' items en total'}")
+
+                    if not df_result.empty:
+                        # Agrupar por caja para mostrar
+                        for caja_nombre in df_result["nombre_caja"].unique():
+                            items_caja_res = df_result[df_result["nombre_caja"] == caja_nombre]
+                            valor_caja = calcular_valor_caja(items_caja_res)
+                            with st.expander(f"📦 {caja_nombre} — {len(items_caja_res)} item(s) | ${valor_caja:,.0f}"):
+                                # Renombrar caja
+                                row_caja = inventario[inventario["Caja"] == caja_nombre].iloc[0]
+                                col_nom, col_btn, col_del = st.columns([3, 1, 1])
+                                with col_nom:
+                                    nuevo_nombre_caja = st.text_input(
+                                        "Nombre de la caja",
+                                        value=str(row_caja["Caja"]),
+                                        key=f"rename_caja_{row_caja['id']}"
+                                    )
+                                with col_btn:
+                                    st.write(""); st.write("")
+                                    if st.button("✏️ Renombrar", key=f"btn_rename_{row_caja['id']}", use_container_width=True):
+                                        if nuevo_nombre_caja and nuevo_nombre_caja != row_caja["Caja"]:
+                                            if renombrar_caja(int(row_caja["id"]), nuevo_nombre_caja):
+                                                st.success("✅ Renombrada"); clear_all_cache(); st.rerun()
+                                with col_del:
+                                    st.write(""); st.write("")
+                                    if st.button("🗑️ Eliminar caja", key=f"del_caja_{row_caja['id']}", use_container_width=True):
+                                        if eliminar_caja(int(row_caja["id"])):
+                                            st.success("✅"); clear_all_cache(); st.rerun()
+
+                                # Tabla de items
+                                display = items_caja_res[["nombre","descripcion","cantidad","precio_unitario"]].copy()
+                                display["subtotal"] = (items_caja_res["cantidad"] * items_caja_res["precio_unitario"]).apply(lambda x: f"${x:,.0f}")
+                                display["cantidad"] = display["cantidad"].apply(lambda x: f"{x} uds")
+                                display["precio_unitario"] = display["precio_unitario"].apply(lambda x: f"${x:,.0f}")
+                                st.dataframe(display, use_container_width=True, hide_index=True)
+                    else:
+                        st.warning(f"⚠️ No se encontró nada con '{busq}'")
+                else:
+                    st.info("📭 No hay items registrados aún")
             else:
                 st.info("📭 Sin cajas")
 
@@ -739,9 +750,8 @@ else:
                     st.markdown("**📋 Items Actuales:**")
                     for _, item in items.iterrows():
                         with st.expander(f"🔸 {item['nombre']} — x{int(item['cantidad'])} | ${int(item['precio_unitario']):,.0f} c/u"):
-                            col1, col2, col3 = st.columns(3)
+                            col1, col2 = st.columns(2)
                             with col1:
-                                # ✅ EDITAR NOMBRE DE ITEM
                                 nuevo_nombre_item = st.text_input(
                                     "Nombre",
                                     value=str(item["nombre"]),
@@ -765,32 +775,6 @@ else:
                                     step=100,
                                     key=f"edit_price_{item['id']}"
                                 )
-                            with col3:
-                                # ✅ CAMPOS PARA ANÁLISIS
-                                cat_actual = item.get("categoria", "General")
-                                cat_idx = CATEGORIAS_ITEM.index(cat_actual) if cat_actual in CATEGORIAS_ITEM else 0
-                                nueva_cat = st.selectbox(
-                                    "Categoría",
-                                    CATEGORIAS_ITEM,
-                                    index=cat_idx,
-                                    key=f"edit_cat_{item['id']}"
-                                )
-                                tp_actual = item.get("tipo_paciente", "General")
-                                tp_idx = TIPOS_PACIENTE.index(tp_actual) if tp_actual in TIPOS_PACIENTE else 0
-                                nuevo_tp = st.selectbox(
-                                    "Tipo Paciente",
-                                    TIPOS_PACIENTE,
-                                    index=tp_idx,
-                                    key=f"edit_tp_{item['id']}"
-                                )
-                                marca_actual = item.get("marca", "Sin marca")
-                                marca_idx = MARCAS_COMUNES.index(marca_actual) if marca_actual in MARCAS_COMUNES else len(MARCAS_COMUNES)-1
-                                nueva_marca = st.selectbox(
-                                    "Marca",
-                                    MARCAS_COMUNES,
-                                    index=marca_idx,
-                                    key=f"edit_marca_{item['id']}"
-                                )
 
                             col_save, col_del = st.columns(2)
                             with col_save:
@@ -800,9 +784,6 @@ else:
                                         "descripcion": nueva_desc,
                                         "cantidad": int(nueva_cant),
                                         "precio_unitario": int(nuevo_precio),
-                                        "categoria": nueva_cat,
-                                        "tipo_paciente": nuevo_tp,
-                                        "marca": nueva_marca
                                     }
                                     if actualizar_item_caja(int(item["id"]), campos_upd):
                                         st.success("✅ Item actualizado"); st.rerun()
@@ -814,24 +795,19 @@ else:
                     st.markdown("---")
 
                 st.markdown("**➕ Nuevo Item:**")
-                col1, col2, col3 = st.columns(3)
+                col1, col2 = st.columns(2)
                 with col1:
                     item_nombre = st.text_input("Nombre Item", placeholder="Sensor SpO2", key=f"item_nom_{caja_id}")
                     item_desc = st.text_input("Descripción", placeholder="Adulto, reutilizable", key=f"item_desc_{caja_id}")
                 with col2:
                     item_cantidad = st.number_input("Cantidad", min_value=1, value=1, key=f"item_cant_{caja_id}")
                     item_precio = st.number_input("Precio Unitario ($)", min_value=0, value=1000, step=100, key=f"item_precio_{caja_id}")
-                with col3:
-                    item_cat = st.selectbox("Categoría", CATEGORIAS_ITEM, key=f"item_cat_{caja_id}")
-                    item_tp = st.selectbox("Tipo Paciente", TIPOS_PACIENTE, key=f"item_tp_{caja_id}")
-                    item_marca = st.selectbox("Marca", MARCAS_COMUNES, key=f"item_marca_{caja_id}")
 
                 if st.button("💾 Agregar Item", use_container_width=True):
                     if item_nombre and item_precio > 0:
                         ok, serial = guardar_item_caja(
                             caja_id, item_nombre, item_desc,
-                            item_cantidad, item_precio,
-                            item_cat, item_tp, item_marca
+                            item_cantidad, item_precio
                         )
                         if ok:
                             st.success("✅ Item agregado"); st.rerun()
@@ -1169,208 +1145,6 @@ else:
             st.plotly_chart(fig, use_container_width=True)
 
     # ============================================================
-    # ✅ NUEVO — ANÁLISIS DE DATOS
-    # ============================================================
-    elif menu == "🔬 Análisis de Datos" and ROL == "admin":
-        st.title("🔬 ANÁLISIS DE DATOS — INVENTARIO")
-        st.caption("Agrupaciones y filtros sobre todos los items del inventario")
-
-        todos_items = cargar_todos_los_items()
-
-        if todos_items.empty:
-            st.warning("⚠️ No hay items con categorías asignadas. Ve a Insumos → Gestionar Items y asigna categoría, tipo de paciente y marca.")
-        else:
-            # ── Métricas globales ──
-            col1, col2, col3, col4 = st.columns(4)
-            with col1: st.metric("📦 Total Items", len(todos_items))
-            with col2: st.metric("🔢 Total Unidades", int(todos_items["cantidad"].sum()))
-            with col3: st.metric("💰 Valor Total", f"${todos_items['subtotal'].sum():,.0f}")
-            with col4:
-                cats_unicas = todos_items["categoria"].nunique()
-                st.metric("🗂️ Categorías", cats_unicas)
-
-            st.markdown("---")
-
-            # ── Filtros ──
-            st.subheader("🔽 Filtros")
-            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-            with col_f1:
-                texto_busq = st.text_input("🔍 Buscar por nombre", placeholder="Sensor, Electrodo...")
-            with col_f2:
-                cats_disp = ["Todas"] + sorted(todos_items["categoria"].dropna().unique().tolist())
-                filtro_cat = st.selectbox("Categoría", cats_disp)
-            with col_f3:
-                tp_disp = ["Todos"] + sorted(todos_items["tipo_paciente"].dropna().unique().tolist())
-                filtro_tp = st.selectbox("Tipo Paciente", tp_disp)
-            with col_f4:
-                marcas_disp = ["Todas"] + sorted(todos_items["marca"].dropna().unique().tolist())
-                filtro_marca = st.selectbox("Marca", marcas_disp)
-
-            # Aplicar filtros
-            df_f = todos_items.copy()
-            if texto_busq:
-                df_f = df_f[df_f["nombre"].str.contains(texto_busq, case=False, na=False)]
-            if filtro_cat != "Todas":
-                df_f = df_f[df_f["categoria"] == filtro_cat]
-            if filtro_tp != "Todos":
-                df_f = df_f[df_f["tipo_paciente"] == filtro_tp]
-            if filtro_marca != "Todas":
-                df_f = df_f[df_f["marca"] == filtro_marca]
-
-            st.markdown("---")
-
-            # ── Tabla resumen filtrada ──
-            st.subheader(f"📋 Resultados ({len(df_f)} items)")
-            if not df_f.empty:
-                col_m1, col_m2 = st.columns(2)
-                with col_m1: st.metric("Unidades filtradas", int(df_f["cantidad"].sum()))
-                with col_m2: st.metric("Valor filtrado", f"${df_f['subtotal'].sum():,.0f}")
-
-                tabla = df_f[["nombre_caja","nombre","categoria","tipo_paciente","marca","cantidad","precio_unitario","subtotal"]].copy()
-                tabla["precio_unitario"] = tabla["precio_unitario"].apply(lambda x: f"${x:,.0f}")
-                tabla["subtotal"] = tabla["subtotal"].apply(lambda x: f"${x:,.0f}")
-                st.dataframe(tabla, use_container_width=True, hide_index=True)
-            else:
-                st.info("📭 Sin resultados para ese filtro")
-
-            st.markdown("---")
-
-            # ── Gráficas de análisis ──
-            st.subheader("📊 Visualizaciones")
-
-            chart_tab1, chart_tab2, chart_tab3, chart_tab4 = st.tabs([
-                "Por Categoría", "Por Tipo Paciente", "Por Marca", "Por Caja"
-            ])
-
-            with chart_tab1:
-                if not df_f.empty:
-                    agg_cat = df_f.groupby("categoria").agg(
-                        unidades=("cantidad","sum"),
-                        valor=("subtotal","sum"),
-                        items=("nombre","count")
-                    ).reset_index().sort_values("valor", ascending=False)
-
-                    col_g1, col_g2 = st.columns(2)
-                    with col_g1:
-                        fig1 = px.bar(agg_cat, x="categoria", y="unidades",
-                                      title="Unidades por Categoría",
-                                      color="categoria", text="unidades")
-                        fig1.update_traces(textposition="outside")
-                        st.plotly_chart(fig1, use_container_width=True)
-                    with col_g2:
-                        fig2 = px.pie(agg_cat, values="valor", names="categoria",
-                                      title="Valor por Categoría")
-                        st.plotly_chart(fig2, use_container_width=True)
-
-                    st.dataframe(agg_cat, use_container_width=True, hide_index=True)
-
-            with chart_tab2:
-                if not df_f.empty:
-                    agg_tp = df_f.groupby("tipo_paciente").agg(
-                        unidades=("cantidad","sum"),
-                        valor=("subtotal","sum"),
-                        items=("nombre","count")
-                    ).reset_index().sort_values("unidades", ascending=False)
-
-                    col_g1, col_g2 = st.columns(2)
-                    with col_g1:
-                        fig3 = px.bar(agg_tp, x="tipo_paciente", y="unidades",
-                                      title="Unidades por Tipo de Paciente",
-                                      color="tipo_paciente",
-                                      color_discrete_map={
-                                          "Adulto": "#2196F3",
-                                          "Pediátrico": "#4CAF50",
-                                          "Neonatal": "#FF9800",
-                                          "General": "#9E9E9E"
-                                      })
-                        st.plotly_chart(fig3, use_container_width=True)
-                    with col_g2:
-                        fig4 = px.pie(agg_tp, values="valor", names="tipo_paciente",
-                                      title="Valor por Tipo de Paciente")
-                        st.plotly_chart(fig4, use_container_width=True)
-
-                    st.dataframe(agg_tp, use_container_width=True, hide_index=True)
-
-            with chart_tab3:
-                if not df_f.empty:
-                    agg_marca = df_f.groupby("marca").agg(
-                        unidades=("cantidad","sum"),
-                        valor=("subtotal","sum"),
-                        items=("nombre","count")
-                    ).reset_index().sort_values("valor", ascending=False)
-
-                    col_g1, col_g2 = st.columns(2)
-                    with col_g1:
-                        fig5 = px.bar(agg_marca, x="marca", y="valor",
-                                      title="Valor de Inventario por Marca",
-                                      color="marca", text_auto=True)
-                        st.plotly_chart(fig5, use_container_width=True)
-                    with col_g2:
-                        fig6 = px.bar(agg_marca, x="marca", y="unidades",
-                                      title="Unidades por Marca",
-                                      color="marca")
-                        st.plotly_chart(fig6, use_container_width=True)
-
-                    st.dataframe(agg_marca, use_container_width=True, hide_index=True)
-
-            with chart_tab4:
-                if not df_f.empty:
-                    agg_caja = df_f.groupby("nombre_caja").agg(
-                        unidades=("cantidad","sum"),
-                        valor=("subtotal","sum"),
-                        items=("nombre","count")
-                    ).reset_index().sort_values("valor", ascending=False)
-
-                    fig7 = px.bar(agg_caja, x="nombre_caja", y="valor",
-                                  title="Valor Total por Caja",
-                                  color="valor", color_continuous_scale="Teal",
-                                  text_auto=True)
-                    fig7.update_layout(xaxis_tickangle=-30)
-                    st.plotly_chart(fig7, use_container_width=True)
-
-                    st.dataframe(agg_caja, use_container_width=True, hide_index=True)
-
-            # ── Agrupación por prefijo de nombre ──
-            st.markdown("---")
-            st.subheader("🔤 Agrupar por Prefijo de Nombre")
-            st.caption("Útil para sumar todos los items que empiecen igual, ej: 'Sensor', 'Electrodo', 'Cable'")
-
-            prefijo_input = st.text_input("Ingresa prefijo a buscar", placeholder="Sensor")
-            if prefijo_input:
-                df_prefijo = todos_items[todos_items["nombre"].str.lower().str.startswith(prefijo_input.lower())]
-                if not df_prefijo.empty:
-                    st.success(f"✅ {len(df_prefijo)} items encontrados con prefijo **'{prefijo_input}'**")
-
-                    col_p1, col_p2, col_p3 = st.columns(3)
-                    with col_p1: st.metric("Total Unidades", int(df_prefijo["cantidad"].sum()))
-                    with col_p2: st.metric("Valor Total", f"${df_prefijo['subtotal'].sum():,.0f}")
-                    with col_p3: st.metric("Variantes", len(df_prefijo))
-
-                    # Desglose por marca
-                    st.markdown("**Por Marca:**")
-                    agg_p_marca = df_prefijo.groupby("marca").agg(
-                        unidades=("cantidad","sum"),
-                        valor=("subtotal","sum")
-                    ).reset_index().sort_values("unidades", ascending=False)
-                    st.dataframe(agg_p_marca, use_container_width=True, hide_index=True)
-
-                    # Desglose por tipo paciente
-                    st.markdown("**Por Tipo de Paciente:**")
-                    agg_p_tp = df_prefijo.groupby("tipo_paciente").agg(
-                        unidades=("cantidad","sum"),
-                        valor=("subtotal","sum")
-                    ).reset_index().sort_values("unidades", ascending=False)
-                    st.dataframe(agg_p_tp, use_container_width=True, hide_index=True)
-
-                    # Tabla completa
-                    st.markdown("**Detalle completo:**")
-                    det = df_prefijo[["nombre_caja","nombre","marca","tipo_paciente","cantidad","precio_unitario","subtotal"]].copy()
-                    det["precio_unitario"] = det["precio_unitario"].apply(lambda x: f"${x:,.0f}")
-                    det["subtotal"] = det["subtotal"].apply(lambda x: f"${x:,.0f}")
-                    st.dataframe(det, use_container_width=True, hide_index=True)
-                else:
-                    st.warning(f"⚠️ Ningún item empieza con '{prefijo_input}'")
-
     # ============================================================
     # ASESOR - MI RESUMEN
     # ============================================================
