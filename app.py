@@ -8,69 +8,355 @@ from supabase import create_client
 st.set_page_config(page_title="Surtidor Médico", layout="wide", initial_sidebar_state="expanded")
 
 # ══════════════════════════════════════════════
-# ESTILOS PROFESIONALES
+# ESTILOS PROFESIONALES — Clínico Élite
 # ══════════════════════════════════════════════
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap');
-html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
-.stApp { background-color: #0f1117; }
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ── Variables ── */
+:root {
+    --bg:        #F7F8FA;
+    --surface:   #FFFFFF;
+    --border:    #E4E8EF;
+    --border2:   #CDD4DF;
+    --text:      #0D1117;
+    --text2:     #4A5568;
+    --text3:     #8A96A8;
+    --accent:    #0A6E5C;
+    --accent2:   #0E8F78;
+    --accentbg:  #EAF5F2;
+    --accentbg2: #D0EDE7;
+    --red:       #C0392B;
+    --redbg:     #FDECEA;
+    --amber:     #B7660A;
+    --amberbg:   #FDF3E3;
+    --blue:      #1A5FAB;
+    --bluebg:    #EBF2FA;
+    --shadow:    0 1px 3px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.04);
+    --shadow-md: 0 4px 24px rgba(0,0,0,.08), 0 1px 4px rgba(0,0,0,.04);
+    --radius:    10px;
+    --radius-lg: 16px;
+}
+
+/* ── Base ── */
+html, body, [class*="css"] {
+    font-family: 'Sora', sans-serif !important;
+    font-size: 14px;
+    color: var(--text);
+}
+.stApp {
+    background: var(--bg) !important;
+}
+.block-container {
+    padding-top: 2rem !important;
+    padding-bottom: 3rem !important;
+    max-width: 1200px !important;
+}
+
+/* ── Sidebar ── */
 section[data-testid="stSidebar"] {
-    background: linear-gradient(180deg,#151822 0%,#0f1117 100%);
-    border-right: 1px solid #1e2333;
+    background: var(--surface) !important;
+    border-right: 1px solid var(--border) !important;
+    box-shadow: 2px 0 12px rgba(0,0,0,.04) !important;
 }
-section[data-testid="stSidebar"] * { color: #c9d1e8 !important; }
-h1 { color:#e8ecf7!important;font-weight:700!important;letter-spacing:-0.5px!important; }
-h2,h3 { color:#c9d1e8!important;font-weight:600!important; }
+section[data-testid="stSidebar"] > div { padding: 1.5rem 1rem !important; }
+section[data-testid="stSidebar"] * { color: var(--text) !important; }
+
+/* Nav radio como botones laterales */
+section[data-testid="stSidebar"] .stRadio > div {
+    gap: 2px !important;
+    flex-direction: column !important;
+}
+section[data-testid="stSidebar"] .stRadio label {
+    display: block !important;
+    padding: 9px 14px !important;
+    border-radius: 8px !important;
+    font-size: 0.82rem !important;
+    font-weight: 500 !important;
+    color: var(--text2) !important;
+    transition: all .15s !important;
+    cursor: pointer !important;
+    border: none !important;
+    background: transparent !important;
+}
+section[data-testid="stSidebar"] .stRadio label:hover {
+    background: var(--accentbg) !important;
+    color: var(--accent) !important;
+}
+section[data-testid="stSidebar"] .stRadio [data-checked="true"] label,
+section[data-testid="stSidebar"] .stRadio label[data-testid*="selected"] {
+    background: var(--accentbg) !important;
+    color: var(--accent) !important;
+    font-weight: 600 !important;
+}
+
+/* ── Tipografía ── */
+h1 {
+    font-size: 1.65rem !important;
+    font-weight: 800 !important;
+    color: var(--text) !important;
+    letter-spacing: -0.6px !important;
+    margin-bottom: 0.25rem !important;
+    border-bottom: 2.5px solid var(--accent) !important;
+    padding-bottom: 0.5rem !important;
+    display: inline-block !important;
+}
+h2 {
+    font-size: 1.1rem !important;
+    font-weight: 700 !important;
+    color: var(--text) !important;
+    letter-spacing: -0.3px !important;
+}
+h3 {
+    font-size: 0.95rem !important;
+    font-weight: 600 !important;
+    color: var(--text2) !important;
+}
+p, li { color: var(--text2) !important; line-height: 1.6 !important; }
+label {
+    font-size: 0.78rem !important;
+    font-weight: 600 !important;
+    color: var(--text3) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+}
+.stCaption { color: var(--text3) !important; font-size: 0.78rem !important; }
+hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
+
+/* ── Métricas ── */
 [data-testid="metric-container"] {
-    background:#151822;border:1px solid #1e2333;border-radius:12px;padding:16px 20px!important;
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-lg) !important;
+    padding: 20px 22px !important;
+    box-shadow: var(--shadow) !important;
+    transition: box-shadow .2s, border-color .2s !important;
+    position: relative !important;
+    overflow: hidden !important;
 }
-[data-testid="metric-container"]:hover { border-color:#3b82f6; }
-[data-testid="stMetricLabel"] { color:#6b7a9e!important;font-size:0.75rem!important;text-transform:uppercase;letter-spacing:0.5px; }
-[data-testid="stMetricValue"] { color:#e8ecf7!important;font-size:1.6rem!important;font-weight:700!important; }
+[data-testid="metric-container"]::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--accent);
+    border-radius: 3px 0 0 3px;
+}
+[data-testid="metric-container"]:hover {
+    box-shadow: var(--shadow-md) !important;
+    border-color: var(--accent2) !important;
+}
+[data-testid="stMetricLabel"] {
+    color: var(--text3) !important;
+    font-size: 0.7rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.8px !important;
+}
+[data-testid="stMetricValue"] {
+    color: var(--text) !important;
+    font-size: 1.7rem !important;
+    font-weight: 800 !important;
+    letter-spacing: -1px !important;
+    font-family: 'Sora', sans-serif !important;
+}
+[data-testid="stMetricDelta"] { font-size: 0.75rem !important; }
+
+/* ── Tabs ── */
 .stTabs [data-baseweb="tab-list"] {
-    background:#151822;border-radius:10px;padding:4px;gap:4px;border:1px solid #1e2333;
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    padding: 5px !important;
+    gap: 3px !important;
+    box-shadow: var(--shadow) !important;
 }
 .stTabs [data-baseweb="tab"] {
-    background:transparent;border-radius:8px;color:#6b7a9e!important;
-    font-weight:500;font-size:0.85rem;padding:8px 16px;border:none!important;
+    background: transparent !important;
+    border-radius: 7px !important;
+    color: var(--text3) !important;
+    font-weight: 600 !important;
+    font-size: 0.8rem !important;
+    letter-spacing: 0.1px !important;
+    padding: 9px 18px !important;
+    border: none !important;
+    transition: all .15s !important;
 }
-.stTabs [aria-selected="true"] { background:#1e2d4a!important;color:#60a5fa!important; }
-.stTextInput>div>div>input,
-.stNumberInput>div>div>input,
-.stSelectbox>div>div {
-    background:#151822!important;border:1px solid #1e2333!important;
-    border-radius:8px!important;color:#e8ecf7!important;
+.stTabs [data-baseweb="tab"]:hover { color: var(--accent) !important; background: var(--accentbg) !important; }
+.stTabs [aria-selected="true"] {
+    background: var(--accent) !important;
+    color: #fff !important;
+    box-shadow: 0 2px 8px rgba(10,110,92,.25) !important;
 }
-.stTextInput>div>div>input:focus { border-color:#3b82f6!important; }
-.stButton>button {
-    background:#1e2d4a!important;color:#60a5fa!important;border:1px solid #2a3f6b!important;
-    border-radius:8px!important;font-weight:600!important;font-size:0.83rem!important;
-    padding:8px 18px!important;transition:all .2s!important;
+
+/* ── Inputs ── */
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+.stTextArea > div > div > textarea {
+    background: var(--surface) !important;
+    border: 1.5px solid var(--border2) !important;
+    border-radius: var(--radius) !important;
+    color: var(--text) !important;
+    font-family: 'Sora', sans-serif !important;
+    font-size: 0.88rem !important;
+    padding: 10px 14px !important;
+    transition: border-color .15s, box-shadow .15s !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,.04) !important;
 }
-.stButton>button:hover {
-    background:#2a3f6b!important;border-color:#3b82f6!important;
-    transform:translateY(-1px);box-shadow:0 4px 12px rgba(59,130,246,.2)!important;
+.stTextInput > div > div > input:focus,
+.stNumberInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px rgba(10,110,92,.12) !important;
+    outline: none !important;
 }
+.stSelectbox > div > div {
+    background: var(--surface) !important;
+    border: 1.5px solid var(--border2) !important;
+    border-radius: var(--radius) !important;
+    color: var(--text) !important;
+    font-family: 'Sora', sans-serif !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,.04) !important;
+}
+
+/* ── Botones ── */
+.stButton > button {
+    background: var(--surface) !important;
+    color: var(--accent) !important;
+    border: 1.5px solid var(--border2) !important;
+    border-radius: var(--radius) !important;
+    font-family: 'Sora', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 0.82rem !important;
+    letter-spacing: 0.2px !important;
+    padding: 9px 20px !important;
+    transition: all .15s !important;
+    box-shadow: var(--shadow) !important;
+}
+.stButton > button:hover {
+    background: var(--accentbg) !important;
+    border-color: var(--accent) !important;
+    box-shadow: var(--shadow-md) !important;
+    transform: translateY(-1px) !important;
+}
+.stButton > button:active {
+    transform: translateY(0) !important;
+    box-shadow: var(--shadow) !important;
+}
+
+/* Botón primario (primer botón de col) */
+.stButton > button[kind="primary"],
+div[data-testid="column"]:first-child .stButton > button {
+    background: var(--accent) !important;
+    color: #fff !important;
+    border-color: var(--accent) !important;
+}
+div[data-testid="column"]:first-child .stButton > button:hover {
+    background: var(--accent2) !important;
+    border-color: var(--accent2) !important;
+}
+
+/* ── Expanders ── */
 .streamlit-expanderHeader {
-    background:#151822!important;border:1px solid #1e2333!important;
-    border-radius:10px!important;color:#c9d1e8!important;font-weight:500!important;
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    color: var(--text) !important;
+    font-weight: 600 !important;
+    font-size: 0.86rem !important;
+    padding: 13px 16px !important;
+    box-shadow: var(--shadow) !important;
+    transition: border-color .15s, box-shadow .15s !important;
+}
+.streamlit-expanderHeader:hover {
+    border-color: var(--accent2) !important;
+    box-shadow: var(--shadow-md) !important;
 }
 .streamlit-expanderContent {
-    background:#11141f!important;border:1px solid #1e2333!important;
-    border-top:none!important;border-radius:0 0 10px 10px!important;
+    background: #FAFBFC !important;
+    border: 1px solid var(--border) !important;
+    border-top: none !important;
+    border-radius: 0 0 var(--radius) var(--radius) !important;
+    padding: 16px !important;
 }
-[data-testid="stDataFrame"] { border:1px solid #1e2333!important;border-radius:10px!important;overflow:hidden; }
-.stSuccess>div { background:#0d2818!important;border-color:#22c55e!important;color:#4ade80!important;border-radius:8px!important; }
-.stError>div   { background:#2d0f0f!important;border-color:#ef4444!important;color:#f87171!important;border-radius:8px!important; }
-.stWarning>div { background:#2d1f0a!important;border-color:#f59e0b!important;color:#fbbf24!important;border-radius:8px!important; }
-.stInfo>div    { background:#0d1a2d!important;border-color:#3b82f6!important;color:#93c5fd!important;border-radius:8px!important; }
-hr { border-color:#1e2333!important; }
-.stCaption { color:#6b7a9e!important; }
-label { color:#8892aa!important;font-size:0.83rem!important;font-weight:500!important; }
-::-webkit-scrollbar { width:5px;height:5px; }
-::-webkit-scrollbar-track { background:#0f1117; }
-::-webkit-scrollbar-thumb { background:#1e2333;border-radius:3px; }
+
+/* ── Dataframe ── */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-lg) !important;
+    overflow: hidden !important;
+    box-shadow: var(--shadow) !important;
+}
+
+/* ── Alertas ── */
+.stSuccess > div {
+    background: var(--accentbg) !important;
+    border-left: 3px solid var(--accent) !important;
+    border-radius: var(--radius) !important;
+    color: var(--accent) !important;
+    font-weight: 500 !important;
+}
+.stError > div {
+    background: var(--redbg) !important;
+    border-left: 3px solid var(--red) !important;
+    border-radius: var(--radius) !important;
+    color: var(--red) !important;
+    font-weight: 500 !important;
+}
+.stWarning > div {
+    background: var(--amberbg) !important;
+    border-left: 3px solid var(--amber) !important;
+    border-radius: var(--radius) !important;
+    color: var(--amber) !important;
+    font-weight: 500 !important;
+}
+.stInfo > div {
+    background: var(--bluebg) !important;
+    border-left: 3px solid var(--blue) !important;
+    border-radius: var(--radius) !important;
+    color: var(--blue) !important;
+    font-weight: 500 !important;
+}
+
+/* ── Checkbox ── */
+.stCheckbox label { text-transform: none !important; letter-spacing: 0 !important; font-size: 0.86rem !important; }
+
+/* ── Date input ── */
+.stDateInput > div > div > input {
+    background: var(--surface) !important;
+    border: 1.5px solid var(--border2) !important;
+    border-radius: var(--radius) !important;
+    color: var(--text) !important;
+    font-family: 'Sora', sans-serif !important;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent2); }
+
+/* ── Animaciones de entrada ── */
+@keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.block-container > div > div > div { animation: fadeUp .35s ease both; }
+
+/* ── Badge helper ── */
+.badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+.badge-green  { background: var(--accentbg2); color: var(--accent); }
+.badge-red    { background: var(--redbg);     color: var(--red); }
+.badge-amber  { background: var(--amberbg);   color: var(--amber); }
+.badge-blue   { background: var(--bluebg);    color: var(--blue); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -388,16 +674,35 @@ for k,v in [("authenticated",False),("usuario",None),("rol",None),("nombre_usuar
 if not st.session_state.authenticated:
     col1,col2,col3 = st.columns([1,1.2,1])
     with col2:
-        st.markdown("<div style='height:80px'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:60px'></div>", unsafe_allow_html=True)
         st.markdown("""
-        <div style='text-align:center;margin-bottom:32px;'>
-            <div style='font-size:2.8rem;'>🏥</div>
-            <h1 style='color:#e8ecf7;font-size:1.8rem;margin:8px 0 4px;'>Surtidor Médico</h1>
-            <p style='color:#6b7a9e;font-size:0.85rem;'>Sistema de Gestión de Inventario</p>
+        <div style='
+            background:#fff;
+            border:1px solid #E4E8EF;
+            border-radius:20px;
+            padding:44px 40px 36px;
+            box-shadow:0 8px 40px rgba(0,0,0,.08);
+            text-align:center;
+            margin-bottom:24px;
+        '>
+            <div style='
+                width:56px;height:56px;
+                background:linear-gradient(135deg,#0A6E5C,#0E8F78);
+                border-radius:16px;
+                display:flex;align-items:center;justify-content:center;
+                margin:0 auto 16px;
+                font-size:1.6rem;
+                box-shadow:0 4px 16px rgba(10,110,92,.3);
+            '>🏥</div>
+            <div style='font-size:1.5rem;font-weight:800;color:#0D1117;letter-spacing:-0.5px;'>Surtidor Médico</div>
+            <div style='font-size:0.8rem;color:#8A96A8;margin-top:6px;font-weight:500;letter-spacing:0.3px;'>
+                SISTEMA DE GESTIÓN DE INVENTARIO
+            </div>
         </div>
         """, unsafe_allow_html=True)
-        usuario   = st.text_input("Usuario",    placeholder="Tu usuario")
-        contraseña = st.text_input("Contraseña", type="password", placeholder="Tu contraseña")
+        usuario    = st.text_input("Usuario",    placeholder="Ingresa tu usuario")
+        contraseña = st.text_input("Contraseña", type="password", placeholder="Ingresa tu contraseña")
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
         if st.button("Iniciar sesión →", use_container_width=True):
             ok,rol,nombre = verificar_usuario(usuario,contraseña)
             if ok:
@@ -417,31 +722,57 @@ else:
     # ── SIDEBAR ──
     with st.sidebar:
         st.markdown(f"""
-        <div style='padding:16px 0 8px;'>
-            <div style='font-size:1.05rem;font-weight:700;color:#e8ecf7;'>{NOMBRE}</div>
-            <div style='font-size:0.72rem;color:#3b82f6;margin-top:2px;'>
-                {'🔑 Administrador' if ROL=='admin' else '🧑‍💼 Asesor'}
-            </div>
-            <div style='font-size:0.7rem;color:#4b5673;margin-top:4px;'>
-                {datetime.now().strftime('%d %b %Y — %H:%M')}
+        <div style='
+            background:linear-gradient(135deg,#0A6E5C,#0E8F78);
+            border-radius:14px;
+            padding:18px;
+            margin-bottom:20px;
+            box-shadow:0 4px 16px rgba(10,110,92,.2);
+        '>
+            <div style='font-size:1rem;font-weight:700;color:#fff;'>{NOMBRE}</div>
+            <div style='
+                display:inline-block;
+                background:rgba(255,255,255,.2);
+                color:#fff;
+                font-size:0.7rem;
+                font-weight:600;
+                letter-spacing:0.5px;
+                padding:2px 10px;
+                border-radius:20px;
+                margin-top:5px;
+            '>{'ADMINISTRADOR' if ROL=='admin' else 'ASESOR'}</div>
+            <div style='font-size:0.7rem;color:rgba(255,255,255,.7);margin-top:8px;'>
+                {datetime.now().strftime('%d %b %Y  ·  %H:%M')}
             </div>
         </div>
         """, unsafe_allow_html=True)
-        st.markdown("---")
-        if st.button("Cerrar Sesión", use_container_width=True):
+
+        if st.button("↩ Cerrar Sesión", use_container_width=True):
             for k in list(st.session_state.keys()): del st.session_state[k]
             st.rerun()
-        st.markdown("---")
+
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style='font-size:0.65rem;font-weight:700;color:#8A96A8;
+                    letter-spacing:1px;text-transform:uppercase;
+                    padding:0 4px;margin-bottom:6px;'>
+            NAVEGACIÓN
+        </div>
+        """, unsafe_allow_html=True)
+
         if ROL=="admin":
             menu = st.radio("MENÚ",[
-                "Dashboard","Clientes","Insumos","Equipos","Baterías",
-                "Asignaciones","Ventas","Créditos","Historial","Reportes"
-            ])
+                "📊  Dashboard","👥  Clientes","📦  Insumos","🖥️  Equipos","🔋  Baterías",
+                "📋  Asignaciones","🛒  Ventas","💳  Créditos","📜  Historial","📈  Reportes"
+            ], label_visibility="collapsed")
         else:
             menu = st.radio("MENÚ",[
-                "Mi Resumen","Mis Clientes","Mis Insumos",
-                "Mis Equipos","Registrar Venta","Mis Créditos"
-            ])
+                "📊  Mi Resumen","👥  Mis Clientes","📦  Mis Insumos",
+                "🖥️  Mis Equipos","🛒  Registrar Venta","💳  Mis Créditos"
+            ], label_visibility="collapsed")
+
+        # Normalizar nombre de menú (quitar emoji + espacios)
+        menu = menu.split("  ",1)[-1].strip() if "  " in menu else menu
 
     # ════════════════════════════════════════
     # ADMIN — DASHBOARD
