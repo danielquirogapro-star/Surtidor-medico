@@ -382,7 +382,11 @@ def get_cached_ventas():       return cargar_ventas()
 @st.cache_data(ttl=120)
 def get_cached_creditos():     return cargar_creditos()
 
-def clear_all_cache(): st.cache_data.clear()
+def clear_all_cache():
+    st.cache_data.clear()
+    # Limpia explícitamente los caches de items también
+    try: get_cached_todos_items.clear()
+    except: pass
 
 def hash_password(p): return hashlib.sha256(p.encode()).hexdigest()
 
@@ -484,6 +488,23 @@ def cargar_items_caja(caja_id):
             return df
         return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item"])
     except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item"])
+
+@st.cache_data(ttl=120)
+def get_cached_todos_items():
+    """Trae TODOS los items de todas las cajas en UNA sola query — evita N+1"""
+    try:
+        resp = get_supabase_client().table("items_caja").select("*").execute()
+        if resp.data:
+            df = pd.DataFrame(resp.data)
+            for c in ["nombre","descripcion","serial_item"]:
+                if c not in df.columns: df[c] = ""
+            for c in ["cantidad","precio_unitario","caja_id"]:
+                if c not in df.columns: df[c] = 0
+            return df
+        return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item"])
+    except Exception as e:
+        st.error(f"Error cargando items: {e}")
+        return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item"])
 
 def guardar_item_caja(caja_id,nombre,descripcion,cantidad,precio_unitario):
     try:
@@ -859,18 +880,19 @@ else:
         with tab1:
             busq=st.text_input("Buscar por nombre, descripción o serial",placeholder="Sensor, SPO2, ITM-ABC123…")
             if not inventario.empty:
-                todos=[]
-                for _,ri in inventario.iterrows():
-                    its=cargar_items_caja(int(ri["id"]))
-                    if not its.empty:
-                        its=its.copy(); its["nombre_caja"]=ri["Caja"]; todos.append(its)
-                if todos:
-                    df_t=pd.concat(todos,ignore_index=True)
+                # ✅ Una sola query para todos los items
+                todos_items = get_cached_todos_items()
+                if not todos_items.empty:
+                    # Unir con nombres de caja via merge
+                    inv_map = inventario[["id","Caja"]].rename(columns={"id":"caja_id","Caja":"nombre_caja"})
+                    df_t = todos_items.merge(inv_map, on="caja_id", how="left")
+                    df_t["nombre_caja"] = df_t["nombre_caja"].fillna("Sin caja")
+
                     if busq.strip():
                         bn=normalizar(busq)
                         mask=(df_t["nombre"].apply(normalizar).str.contains(bn,na=False)|
                               df_t["descripcion"].apply(normalizar).str.contains(bn,na=False)|
-                              df_t.get("serial_item",pd.Series([""]*len(df_t))).apply(normalizar).str.contains(bn,na=False))
+                              df_t["serial_item"].apply(normalizar).str.contains(bn,na=False))
                         df_r=df_t[mask]
                     else: df_r=df_t
                     st.caption(f"{'🔎 '+str(len(df_r))+' resultado(s)' if busq.strip() else str(len(df_r))+' items totales'}")
@@ -1120,7 +1142,8 @@ else:
                 valu=0
                 if not inventario.empty and cajav!="Sin cajas":
                     cid4=int(inventario[inventario["Caja"]==cajav].iloc[0]["id"])
-                    itms=cargar_items_caja(cid4)
+                    todos_i=get_cached_todos_items()
+                    itms=todos_i[todos_i["caja_id"]==cid4] if not todos_i.empty else pd.DataFrame()
                     valu=int(itms["precio_unitario"].mean()) if not itms.empty else 0
                 st.metric("Precio unitario",f"${valu:,.0f}")
             montov=cantv*valu; st.metric("Monto total",f"${montov:,.0f}")
@@ -1329,7 +1352,8 @@ else:
             valu=0
             if cajas_d and not inventario.empty and cajav in inventario["Caja"].values:
                 cid5=int(inventario[inventario["Caja"]==cajav].iloc[0]["id"])
-                itms=cargar_items_caja(cid5)
+                todos_i=get_cached_todos_items()
+                itms=todos_i[todos_i["caja_id"]==cid5] if not todos_i.empty else pd.DataFrame()
                 valu=int(itms["precio_unitario"].mean()) if not itms.empty else 0
             st.metric("Precio",f"${valu:,.0f}")
         montov=cantv*valu; st.metric("Total",f"${montov:,.0f}")
