@@ -1,18 +1,82 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
-import hashlib
-import random
-import string
-import plotly.graph_objects as go
+from datetime import datetime
+import hashlib, random, string, unicodedata
 import plotly.express as px
 from supabase import create_client
 
 st.set_page_config(page_title="Surtidor Médico", layout="wide", initial_sidebar_state="expanded")
 
-# ==============================
+# ══════════════════════════════════════════════
+# ESTILOS PROFESIONALES
+# ══════════════════════════════════════════════
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap');
+html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
+.stApp { background-color: #0f1117; }
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg,#151822 0%,#0f1117 100%);
+    border-right: 1px solid #1e2333;
+}
+section[data-testid="stSidebar"] * { color: #c9d1e8 !important; }
+h1 { color:#e8ecf7!important;font-weight:700!important;letter-spacing:-0.5px!important; }
+h2,h3 { color:#c9d1e8!important;font-weight:600!important; }
+[data-testid="metric-container"] {
+    background:#151822;border:1px solid #1e2333;border-radius:12px;padding:16px 20px!important;
+}
+[data-testid="metric-container"]:hover { border-color:#3b82f6; }
+[data-testid="stMetricLabel"] { color:#6b7a9e!important;font-size:0.75rem!important;text-transform:uppercase;letter-spacing:0.5px; }
+[data-testid="stMetricValue"] { color:#e8ecf7!important;font-size:1.6rem!important;font-weight:700!important; }
+.stTabs [data-baseweb="tab-list"] {
+    background:#151822;border-radius:10px;padding:4px;gap:4px;border:1px solid #1e2333;
+}
+.stTabs [data-baseweb="tab"] {
+    background:transparent;border-radius:8px;color:#6b7a9e!important;
+    font-weight:500;font-size:0.85rem;padding:8px 16px;border:none!important;
+}
+.stTabs [aria-selected="true"] { background:#1e2d4a!important;color:#60a5fa!important; }
+.stTextInput>div>div>input,
+.stNumberInput>div>div>input,
+.stSelectbox>div>div {
+    background:#151822!important;border:1px solid #1e2333!important;
+    border-radius:8px!important;color:#e8ecf7!important;
+}
+.stTextInput>div>div>input:focus { border-color:#3b82f6!important; }
+.stButton>button {
+    background:#1e2d4a!important;color:#60a5fa!important;border:1px solid #2a3f6b!important;
+    border-radius:8px!important;font-weight:600!important;font-size:0.83rem!important;
+    padding:8px 18px!important;transition:all .2s!important;
+}
+.stButton>button:hover {
+    background:#2a3f6b!important;border-color:#3b82f6!important;
+    transform:translateY(-1px);box-shadow:0 4px 12px rgba(59,130,246,.2)!important;
+}
+.streamlit-expanderHeader {
+    background:#151822!important;border:1px solid #1e2333!important;
+    border-radius:10px!important;color:#c9d1e8!important;font-weight:500!important;
+}
+.streamlit-expanderContent {
+    background:#11141f!important;border:1px solid #1e2333!important;
+    border-top:none!important;border-radius:0 0 10px 10px!important;
+}
+[data-testid="stDataFrame"] { border:1px solid #1e2333!important;border-radius:10px!important;overflow:hidden; }
+.stSuccess>div { background:#0d2818!important;border-color:#22c55e!important;color:#4ade80!important;border-radius:8px!important; }
+.stError>div   { background:#2d0f0f!important;border-color:#ef4444!important;color:#f87171!important;border-radius:8px!important; }
+.stWarning>div { background:#2d1f0a!important;border-color:#f59e0b!important;color:#fbbf24!important;border-radius:8px!important; }
+.stInfo>div    { background:#0d1a2d!important;border-color:#3b82f6!important;color:#93c5fd!important;border-radius:8px!important; }
+hr { border-color:#1e2333!important; }
+.stCaption { color:#6b7a9e!important; }
+label { color:#8892aa!important;font-size:0.83rem!important;font-weight:500!important; }
+::-webkit-scrollbar { width:5px;height:5px; }
+::-webkit-scrollbar-track { background:#0f1117; }
+::-webkit-scrollbar-thumb { background:#1e2333;border-radius:3px; }
+</style>
+""", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════
 # CACHE & CONFIG
-# ==============================
+# ══════════════════════════════════════════════
 @st.cache_resource
 def get_supabase_client():
     url = st.secrets["supabase"]["url"]
@@ -20,1269 +84,958 @@ def get_supabase_client():
     return create_client(url, key)
 
 @st.cache_data(ttl=300)
-def get_cached_inventario():
-    return cargar_inventario()
-
+def get_cached_inventario():   return cargar_inventario()
 @st.cache_data(ttl=300)
-def get_cached_asesores():
-    return obtener_asesores()
-
+def get_cached_asesores():     return obtener_asesores()
 @st.cache_data(ttl=300)
-def get_cached_clientes():
-    return cargar_clientes()
+def get_cached_clientes():     return cargar_clientes()
+@st.cache_data(ttl=120)
+def get_cached_asignaciones(): return cargar_asignaciones()
+@st.cache_data(ttl=120)
+def get_cached_ventas():       return cargar_ventas()
+@st.cache_data(ttl=120)
+def get_cached_creditos():     return cargar_creditos()
 
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+def clear_all_cache(): st.cache_data.clear()
 
-ESTADOS_EQUIPO = ["Recién ingresado", "En proceso de venta", "Listo para vender", "Pendiente por repuesto"]
-COLOR_ESTADO = {"Recién ingresado": "🟡", "En proceso de venta": "🔵", "Listo para vender": "🟢", "Pendiente por repuesto": "🔴"}
-ESTADOS_BATERIA = ["Disponible", "En uso", "Dañada", "En mantenimiento", "Baja de inventario"]
-COLOR_BATERIA = {"Disponible": "🟢", "En uso": "🔵", "Dañada": "🔴", "En mantenimiento": "🟡", "Baja de inventario": "⚫"}
+def hash_password(p): return hashlib.sha256(p.encode()).hexdigest()
 
-# Categorías para análisis de datos
-def generar_serial(prefijo="SM"):
-    chars = string.ascii_uppercase + string.digits
-    return f"{prefijo}-{''.join(random.choices(chars, k=6))}"
+def generar_serial(pref="SM"):
+    return f"{pref}-{''.join(random.choices(string.ascii_uppercase+string.digits, k=6))}"
 
-def clear_all_cache():
-    st.cache_data.clear()
+def normalizar(s):
+    s = str(s).lower()
+    return ''.join(c for c in unicodedata.normalize('NFD',s) if unicodedata.category(c)!='Mn')
 
-# ==============================
-# BÚSQUEDA
-# ==============================
-def buscar_por_serial(serial):
-    try:
-        supabase = get_supabase_client()
-        resultado = {"equipo": None, "insumo": None, "bateria": None}
-        eq = supabase.table("equipos").select("*").eq("Serial", serial).execute()
-        if eq.data: resultado["equipo"] = eq.data[0]
-        inv = supabase.table("inventario").select("*").eq("serial", serial).execute()
-        if inv.data: resultado["insumo"] = inv.data[0]
-        bat = supabase.table("baterias").select("*").eq("serial", serial).execute()
-        if bat.data: resultado["bateria"] = bat.data[0]
-        return resultado
-    except Exception as e:
-        st.error(f"❌ Error buscando serial: {e}")
-        return {"equipo": None, "insumo": None, "bateria": None}
+ESTADOS_EQUIPO  = ["Recién ingresado","En proceso de venta","Listo para vender","Pendiente por repuesto"]
+COLOR_ESTADO    = {"Recién ingresado":"🟡","En proceso de venta":"🔵","Listo para vender":"🟢","Pendiente por repuesto":"🔴"}
+ESTADOS_BATERIA = ["Disponible","En uso","Dañada","En mantenimiento","Baja de inventario"]
+COLOR_BATERIA   = {"Disponible":"🟢","En uso":"🔵","Dañada":"🔴","En mantenimiento":"🟡","Baja de inventario":"⚫"}
 
-# ==============================
-# AUTENTICACIÓN
-# ==============================
+# ══════════════════════════════════════════════
+# DATA FUNCTIONS
+# ══════════════════════════════════════════════
 def verificar_usuario(usuario, contraseña):
-    if not usuario or not contraseña: return False, None, None
+    if not usuario or not contraseña: return False,None,None
     try:
-        supabase = get_supabase_client()
-        resp = supabase.table("usuarios").select("*").eq("usuario", usuario).execute()
-        if not resp.data: return False, None, None
+        resp = get_supabase_client().table("usuarios").select("*").eq("usuario",usuario).execute()
+        if not resp.data: return False,None,None
         row = resp.data[0]
-        if row["contrasena"] == hash_password(contraseña): return True, row["rol"], row["nombre"]
-        return False, None, None
-    except Exception as e:
-        st.error(f"❌ Error verificando usuario: {e}")
-        return False, None, None
+        if row["contrasena"]==hash_password(contraseña): return True,row["rol"],row["nombre"]
+        return False,None,None
+    except Exception as e: st.error(f"Error: {e}"); return False,None,None
 
-# ==============================
-# ASESORES Y CLIENTES
-# ==============================
 def obtener_asesores():
     try:
-        supabase = get_supabase_client()
-        resp = supabase.table("usuarios").select("usuario,nombre").eq("rol", "asesor").execute()
+        resp = get_supabase_client().table("usuarios").select("usuario,nombre").eq("rol","asesor").execute()
         return [r["usuario"] for r in (resp.data or [])]
     except: return []
 
 def cargar_clientes(asesor=None):
     try:
-        supabase = get_supabase_client()
-        query = supabase.table("clientes").select("*")
-        if asesor: query = query.eq("asesor", asesor)
-        resp = query.execute()
+        q = get_supabase_client().table("clientes").select("*")
+        if asesor: q = q.eq("asesor",asesor)
+        resp = q.execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
-            for col in ["nombre","cedula","telefono","direccion","asesor"]:
-                if col not in df.columns: df[col] = ""
+            for c in ["nombre","cedula","telefono","direccion","asesor"]:
+                if c not in df.columns: df[c]=""
             return df
         return pd.DataFrame(columns=["id","nombre","cedula","telefono","direccion","asesor"])
-    except Exception as e:
-        st.error(f"❌ Error: {e}")
-        return pd.DataFrame(columns=["id","nombre","cedula","telefono","direccion","asesor"])
+    except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","nombre","cedula","telefono","direccion","asesor"])
 
-def guardar_cliente(nombre, cedula, telefono, asesor):
-    try:
-        supabase = get_supabase_client()
-        supabase.table("clientes").insert({"nombre": nombre, "cedula": cedula, "telefono": telefono, "asesor": asesor}).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+def guardar_cliente(nombre,cedula,telefono,asesor):
+    try: get_supabase_client().table("clientes").insert({"nombre":nombre,"cedula":cedula,"telefono":telefono,"asesor":asesor}).execute(); return True
+    except Exception as e: st.error(f"Error:{e}"); return False
 
-def eliminar_cliente(cliente_id):
-    try:
-        supabase = get_supabase_client()
-        supabase.table("clientes").delete().eq("id", cliente_id).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+def eliminar_cliente(cid):
+    try: get_supabase_client().table("clientes").delete().eq("id",cid).execute(); return True
+    except Exception as e: st.error(f"Error:{e}"); return False
 
-# ==============================
-# INVENTARIO - CAJAS
-# ==============================
 def cargar_inventario():
     try:
-        supabase = get_supabase_client()
-        resp = supabase.table("inventario").select("*").execute()
+        resp = get_supabase_client().table("inventario").select("*").execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
-            for col in ["Cantidad", "Cantidad_Total"]:
-                if col not in df.columns: df[col] = 0
+            for c in ["Cantidad","Cantidad_Total"]:
+                if c not in df.columns: df[c]=0
             return df
         return pd.DataFrame(columns=["id","Caja","Cantidad","Cantidad_Total","serial"])
-    except Exception as e:
-        st.error(f"❌ Error cargando inventario: {e}")
-        return pd.DataFrame(columns=["id","Caja","Cantidad","Cantidad_Total","serial"])
+    except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","Caja","Cantidad","Cantidad_Total","serial"])
 
 def guardar_caja_nueva(caja):
     try:
-        supabase = get_supabase_client()
-        serial = generar_serial("INS")
-        supabase.table("inventario").insert({"Caja": caja, "Cantidad": 0, "Cantidad_Total": 0, "serial": serial}).execute()
-        return True, serial
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False, None
+        serial=generar_serial("INS")
+        get_supabase_client().table("inventario").insert({"Caja":caja,"Cantidad":0,"Cantidad_Total":0,"serial":serial}).execute()
+        return True,serial
+    except Exception as e: st.error(f"Error:{e}"); return False,None
 
-def actualizar_caja(caja_id, campos):
-    try:
-        supabase = get_supabase_client()
-        supabase.table("inventario").update(campos).eq("id", caja_id).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+def actualizar_caja(caja_id,campos):
+    try: get_supabase_client().table("inventario").update(campos).eq("id",caja_id).execute(); return True
+    except Exception as e: st.error(f"Error:{e}"); return False
 
-# ✅ NUEVO: Renombrar caja
-def renombrar_caja(caja_id, nuevo_nombre):
-    try:
-        supabase = get_supabase_client()
-        supabase.table("inventario").update({"Caja": nuevo_nombre}).eq("id", caja_id).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error renombrando caja: {e}"); return False
+def renombrar_caja(caja_id,nuevo_nombre):
+    try: get_supabase_client().table("inventario").update({"Caja":nuevo_nombre}).eq("id",caja_id).execute(); return True
+    except Exception as e: st.error(f"Error:{e}"); return False
 
 def eliminar_caja(caja_id):
     try:
-        supabase = get_supabase_client()
-        supabase.table("items_caja").delete().eq("caja_id", caja_id).execute()
-        supabase.table("inventario").delete().eq("id", caja_id).execute()
+        sb=get_supabase_client()
+        sb.table("items_caja").delete().eq("caja_id",caja_id).execute()
+        sb.table("inventario").delete().eq("id",caja_id).execute()
         return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+    except Exception as e: st.error(f"Error:{e}"); return False
 
-# ==============================
-# ITEMS EN CAJAS
-# ==============================
 def cargar_items_caja(caja_id):
     try:
-        supabase = get_supabase_client()
-        resp = supabase.table("items_caja").select("*").eq("caja_id", caja_id).order("id").execute()
+        resp = get_supabase_client().table("items_caja").select("*").eq("caja_id",caja_id).order("id").execute()
         if resp.data:
-            df = pd.DataFrame(resp.data)
-            for col in ["nombre","descripcion"]:
-                if col not in df.columns: df[col] = ""
-            for col in ["cantidad","precio_unitario"]:
-                if col not in df.columns: df[col] = 0
-            # ✅ NUEVAS columnas para análisis
-            for col in ["categoria","tipo_paciente","marca"]:
-                if col not in df.columns: df[col] = "General" if col != "marca" else "Sin marca"
+            df=pd.DataFrame(resp.data)
+            for c in ["nombre","descripcion"]:
+                if c not in df.columns: df[c]=""
+            for c in ["cantidad","precio_unitario"]:
+                if c not in df.columns: df[c]=0
             return df
-        return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item","categoria","tipo_paciente","marca"])
-    except Exception as e:
-        st.error(f"❌ Error cargando items: {e}")
-        return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item","categoria","tipo_paciente","marca"])
+        return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item"])
+    except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","caja_id","nombre","descripcion","cantidad","precio_unitario","serial_item"])
 
-def guardar_item_caja(caja_id, nombre, descripcion, cantidad, precio_unitario):
+def guardar_item_caja(caja_id,nombre,descripcion,cantidad,precio_unitario):
     try:
-        supabase = get_supabase_client()
-        serial_item = generar_serial("ITM")
-        supabase.table("items_caja").insert({
-            "caja_id": int(caja_id),
-            "nombre": nombre,
-            "descripcion": descripcion,
-            "cantidad": int(cantidad),
-            "precio_unitario": int(precio_unitario),
-            "serial_item": serial_item
-        }).execute()
-        return True, serial_item
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False, None
+        s=generar_serial("ITM")
+        get_supabase_client().table("items_caja").insert({"caja_id":int(caja_id),"nombre":nombre,"descripcion":descripcion,"cantidad":int(cantidad),"precio_unitario":int(precio_unitario),"serial_item":s}).execute()
+        return True,s
+    except Exception as e: st.error(f"Error:{e}"); return False,None
+
+def actualizar_item_caja(item_id,campos):
+    try: get_supabase_client().table("items_caja").update(campos).eq("id",item_id).execute(); return True
+    except Exception as e: st.error(f"Error:{e}"); return False
 
 def eliminar_item_caja(item_id):
-    try:
-        supabase = get_supabase_client()
-        supabase.table("items_caja").delete().eq("id", item_id).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+    try: get_supabase_client().table("items_caja").delete().eq("id",item_id).execute(); return True
+    except Exception as e: st.error(f"Error:{e}"); return False
 
-def actualizar_item_caja(item_id, campos):
-    try:
-        supabase = get_supabase_client()
-        supabase.table("items_caja").update(campos).eq("id", item_id).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+def calcular_valor_caja(df):
+    if df.empty: return 0
+    return int((df["cantidad"]*df["precio_unitario"]).sum())
 
-def calcular_valor_caja(items_df):
-    if items_df.empty:
-        return 0
-    return int((items_df["cantidad"] * items_df["precio_unitario"]).sum())
-
-# ==============================
-# EQUIPOS
-# ==============================
 def cargar_equipos(asesor=None):
     try:
-        supabase = get_supabase_client()
-        query = supabase.table("equipos").select("*")
-        if asesor: query = query.eq("Asesor_Asignado", asesor)
-        resp = query.execute()
+        q=get_supabase_client().table("equipos").select("*")
+        if asesor: q=q.eq("Asesor_Asignado",asesor)
+        resp=q.execute()
         if resp.data:
-            df = pd.DataFrame(resp.data)
-            for col in ["Nombre","Serial","Estado","Comentarios","Asesor_Asignado","Cliente_Asignado"]:
-                if col not in df.columns: df[col] = ""
-            if "Precio" not in df.columns: df["Precio"] = 0
+            df=pd.DataFrame(resp.data)
+            for c in ["Nombre","Serial","Estado","Comentarios","Asesor_Asignado","Cliente_Asignado"]:
+                if c not in df.columns: df[c]=""
+            if "Precio" not in df.columns: df["Precio"]=0
             return df
         return pd.DataFrame(columns=["id","Nombre","Serial","Estado","Comentarios","Precio","Asesor_Asignado","Cliente_Asignado"])
-    except Exception as e:
-        st.error(f"❌ Error cargando equipos: {e}")
-        return pd.DataFrame(columns=["id","Nombre","Serial","Estado","Comentarios","Precio","Asesor_Asignado","Cliente_Asignado"])
+    except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","Nombre","Serial","Estado","Comentarios","Precio","Asesor_Asignado","Cliente_Asignado"])
 
 def guardar_equipo_nuevo(d):
     try:
-        supabase = get_supabase_client()
-        if not d.get("Serial"): d["Serial"] = generar_serial("EQ")
-        supabase.table("equipos").insert(d).execute()
-        return True, d["Serial"]
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False, None
+        if not d.get("Serial"): d["Serial"]=generar_serial("EQ")
+        get_supabase_client().table("equipos").insert(d).execute()
+        return True,d["Serial"]
+    except Exception as e: st.error(f"Error:{e}"); return False,None
 
-def actualizar_equipo(equipo_id, campos):
-    try:
-        supabase = get_supabase_client()
-        supabase.table("equipos").update(campos).eq("id", equipo_id).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+def actualizar_equipo(eid,campos):
+    try: get_supabase_client().table("equipos").update(campos).eq("id",eid).execute(); return True
+    except Exception as e: st.error(f"Error:{e}"); return False
 
-def eliminar_equipo(equipo_id):
-    try:
-        supabase = get_supabase_client()
-        supabase.table("equipos").delete().eq("id", equipo_id).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+def eliminar_equipo(eid):
+    try: get_supabase_client().table("equipos").delete().eq("id",eid).execute(); return True
+    except Exception as e: st.error(f"Error:{e}"); return False
 
-# ==============================
-# BATERÍAS
-# ==============================
 def cargar_baterias():
     try:
-        supabase = get_supabase_client()
-        resp = supabase.table("baterias").select("*").execute()
+        resp=get_supabase_client().table("baterias").select("*").execute()
         if resp.data:
-            df = pd.DataFrame(resp.data)
-            for col in ["nombre","serial","proveedor","estado","equipo_asignado","notas"]:
-                if col not in df.columns: df[col] = ""
-            for col in ["tiempo_uso_horas","costo"]:
-                if col not in df.columns: df[col] = 0
-            if "fecha_compra" not in df.columns: df["fecha_compra"] = None
-            else: df["fecha_compra"] = pd.to_datetime(df["fecha_compra"], errors="coerce")
+            df=pd.DataFrame(resp.data)
+            for c in ["nombre","serial","proveedor","estado","equipo_asignado","notas"]:
+                if c not in df.columns: df[c]=""
+            for c in ["tiempo_uso_horas","costo"]:
+                if c not in df.columns: df[c]=0
+            if "fecha_compra" in df.columns: df["fecha_compra"]=pd.to_datetime(df["fecha_compra"],errors="coerce")
             return df
         return pd.DataFrame(columns=["id","nombre","serial","proveedor","fecha_compra","tiempo_uso_horas","costo","estado","equipo_asignado","notas"])
-    except Exception as e:
-        st.error(f"❌ Error cargando baterías: {e}")
-        return pd.DataFrame(columns=["id","nombre","serial","proveedor","fecha_compra","tiempo_uso_horas","costo","estado","equipo_asignado","notas"])
+    except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","nombre","serial","proveedor","fecha_compra","tiempo_uso_horas","costo","estado","equipo_asignado","notas"])
 
-def guardar_bateria(nombre, proveedor, fecha_compra, tiempo_uso_horas, costo, estado, equipo_asignado, notas, serial_manual=""):
+def guardar_bateria(nombre,proveedor,fc,horas,costo,estado,equipo,notas,serial_m=""):
     try:
-        supabase = get_supabase_client()
-        serial = serial_manual if serial_manual else generar_serial("BAT")
-        supabase.table("baterias").insert({
-            "nombre": nombre, "serial": serial, "proveedor": proveedor,
-            "fecha_compra": fecha_compra.strftime("%Y-%m-%d"),
-            "tiempo_uso_horas": int(tiempo_uso_horas), "costo": int(costo),
-            "estado": estado, "equipo_asignado": equipo_asignado, "notas": notas
-        }).execute()
-        return True, serial
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False, None
+        s=serial_m or generar_serial("BAT")
+        get_supabase_client().table("baterias").insert({"nombre":nombre,"serial":s,"proveedor":proveedor,"fecha_compra":fc.strftime("%Y-%m-%d"),"tiempo_uso_horas":int(horas),"costo":int(costo),"estado":estado,"equipo_asignado":equipo,"notas":notas}).execute()
+        return True,s
+    except Exception as e: st.error(f"Error:{e}"); return False,None
 
-def actualizar_bateria(bat_id, campos):
-    try:
-        supabase = get_supabase_client()
-        supabase.table("baterias").update(campos).eq("id", bat_id).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+def actualizar_bateria(bid,campos):
+    try: get_supabase_client().table("baterias").update(campos).eq("id",bid).execute(); return True
+    except Exception as e: st.error(f"Error:{e}"); return False
 
-def eliminar_bateria(bat_id):
+def registrar_historial(asesor,caja,cantidad,tipo,nota=""):
+    if tipo=="credito": return
     try:
-        supabase = get_supabase_client()
-        supabase.table("baterias").delete().eq("id", bat_id).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+        get_supabase_client().table("historial_asignaciones").insert({"asesor":asesor,"caja":caja,"cantidad":int(cantidad),"tipo":tipo,"nota":nota,"fecha":datetime.now().strftime("%Y-%m-%d %H:%M:%S")}).execute()
+    except: pass
 
-# ==============================
-# HISTORIAL  (sin créditos)
-# ==============================
-def registrar_historial_asignacion(asesor, caja, cantidad, tipo, nota=""):
-    # ✅ Solo registra si NO es tipo crédito
-    if tipo == "credito":
-        return
+def cargar_historial_asignaciones(asesor=None,caja=None):
     try:
-        supabase = get_supabase_client()
-        supabase.table("historial_asignaciones").insert({
-            "asesor": asesor, "caja": caja, "cantidad": int(cantidad),
-            "tipo": tipo, "nota": nota,
-            "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }).execute()
-    except Exception as e:
-        st.warning(f"⚠️ No se pudo registrar historial: {e}")
-
-def cargar_historial_asignaciones(asesor=None, caja=None):
-    try:
-        supabase = get_supabase_client()
-        query = supabase.table("historial_asignaciones").select("*")
-        if asesor: query = query.eq("asesor", asesor)
-        if caja: query = query.eq("caja", caja)
-        # ✅ Excluir registros tipo crédito
-        resp = query.order("fecha", desc=True).execute()
+        q=get_supabase_client().table("historial_asignaciones").select("*")
+        if asesor: q=q.eq("asesor",asesor)
+        if caja:   q=q.eq("caja",caja)
+        resp=q.order("fecha",desc=True).execute()
         if resp.data:
-            df = pd.DataFrame(resp.data)
-            df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
-            for col in ["asesor","caja","tipo","nota"]:
-                if col not in df.columns: df[col] = ""
-            if "cantidad" not in df.columns: df["cantidad"] = 0
-            # ✅ Filtrar créditos fuera
-            df = df[df["tipo"] != "credito"]
-            return df
+            df=pd.DataFrame(resp.data)
+            df["fecha"]=pd.to_datetime(df["fecha"],errors="coerce")
+            for c in ["asesor","caja","tipo","nota"]:
+                if c not in df.columns: df[c]=""
+            if "cantidad" not in df.columns: df["cantidad"]=0
+            return df[df["tipo"]!="credito"]
         return pd.DataFrame(columns=["id","asesor","caja","cantidad","tipo","nota","fecha"])
-    except Exception as e:
-        st.error(f"❌ Error cargando historial: {e}")
-        return pd.DataFrame(columns=["id","asesor","caja","cantidad","tipo","nota","fecha"])
+    except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","asesor","caja","cantidad","tipo","nota","fecha"])
 
-# ==============================
-# ASIGNACIONES
-# ==============================
 def cargar_asignaciones(asesor=None):
     try:
-        supabase = get_supabase_client()
-        query = supabase.table("asignaciones").select("*")
-        if asesor: query = query.eq("asesor", asesor)
-        resp = query.execute()
-        if resp.data: return pd.DataFrame(resp.data)
-        return pd.DataFrame(columns=["id","asesor","caja","cantidad","fecha"])
-    except Exception as e:
-        st.error(f"❌ Error: {e}")
-        return pd.DataFrame(columns=["id","asesor","caja","cantidad","fecha"])
+        q=get_supabase_client().table("asignaciones").select("*")
+        if asesor: q=q.eq("asesor",asesor)
+        resp=q.execute()
+        if resp.data:
+            df=pd.DataFrame(resp.data)
+            if "comentario" not in df.columns: df["comentario"]=""
+            return df
+        return pd.DataFrame(columns=["id","asesor","caja","cantidad","fecha","comentario"])
+    except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","asesor","caja","cantidad","fecha","comentario"])
 
-def guardar_asignacion(asesor, caja, cantidad, fecha):
+def guardar_asignacion(asesor,caja,cantidad,fecha,comentario=""):
     try:
-        supabase = get_supabase_client()
-        supabase.table("asignaciones").insert({"asesor": asesor, "caja": caja, "cantidad": int(cantidad), "fecha": fecha.strftime("%Y-%m-%d")}).execute()
-        registrar_historial_asignacion(asesor, caja, cantidad, "asignacion", f"Asignación de {cantidad} uds de '{caja}' a {asesor}")
+        get_supabase_client().table("asignaciones").insert({"asesor":asesor,"caja":caja,"cantidad":int(cantidad),"fecha":fecha.strftime("%Y-%m-%d"),"comentario":comentario}).execute()
+        nota=f"Asignación {cantidad} uds '{caja}' → {asesor}"
+        if comentario: nota+=f" — {comentario}"
+        registrar_historial(asesor,caja,cantidad,"asignacion",nota)
         return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+    except Exception as e: st.error(f"Error:{e}"); return False
 
-# ==============================
-# VENTAS
-# ==============================
 def cargar_ventas(asesor=None):
     try:
-        supabase = get_supabase_client()
-        query = supabase.table("ventas").select("*")
-        if asesor: query = query.eq("asesor", asesor)
-        resp = query.execute()
+        q=get_supabase_client().table("ventas").select("*")
+        if asesor: q=q.eq("asesor",asesor)
+        resp=q.execute()
         if resp.data:
-            df = pd.DataFrame(resp.data)
-            if "fecha" in df.columns: df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
-            for col in ["cliente","caja","asesor"]:
-                if col not in df.columns: df[col] = ""
-            for col in ["cantidad","valor_unitario","monto"]:
-                if col not in df.columns: df[col] = 0
-            if "es_credito" not in df.columns: df["es_credito"] = False
+            df=pd.DataFrame(resp.data)
+            if "fecha" in df.columns: df["fecha"]=pd.to_datetime(df["fecha"],errors="coerce")
+            for c in ["cliente","caja","asesor"]:
+                if c not in df.columns: df[c]=""
+            for c in ["cantidad","valor_unitario","monto"]:
+                if c not in df.columns: df[c]=0
+            if "es_credito" not in df.columns: df["es_credito"]=False
             return df
         return pd.DataFrame(columns=["id","fecha","cliente","caja","cantidad","valor_unitario","monto","es_credito","asesor"])
-    except Exception as e:
-        st.error(f"❌ Error: {e}")
-        return pd.DataFrame(columns=["id","fecha","cliente","caja","cantidad","valor_unitario","monto","es_credito","asesor"])
+    except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","fecha","cliente","caja","cantidad","valor_unitario","monto","es_credito","asesor"])
 
-def guardar_venta(fecha, cliente, caja, cantidad, valor_unitario, monto, es_credito, asesor):
+def guardar_venta(fecha,cliente,caja,cantidad,valor_unitario,monto,es_credito,asesor):
     try:
-        supabase = get_supabase_client()
-        supabase.table("ventas").insert({
-            "fecha": fecha.strftime("%Y-%m-%d"),
-            "cliente": cliente,
-            "caja": caja,
-            "cantidad": int(cantidad),
-            "valor_unitario": int(valor_unitario),
-            "monto": int(monto),
-            "es_credito": es_credito,
-            "asesor": asesor
-        }).execute()
-        registrar_historial_asignacion(asesor, caja, cantidad, "venta", f"Venta de {cantidad} uds a cliente '{cliente}'")
+        get_supabase_client().table("ventas").insert({"fecha":fecha.strftime("%Y-%m-%d"),"cliente":cliente,"caja":caja,"cantidad":int(cantidad),"valor_unitario":int(valor_unitario),"monto":int(monto),"es_credito":es_credito,"asesor":asesor}).execute()
+        registrar_historial(asesor,caja,cantidad,"venta",f"Venta {cantidad} uds → '{cliente}'")
         return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+    except Exception as e: st.error(f"Error:{e}"); return False
 
-def eliminar_venta(venta_id):
-    try:
-        supabase = get_supabase_client()
-        supabase.table("ventas").delete().eq("id", venta_id).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
-
-# ==============================
-# CRÉDITOS
-# ==============================
 def cargar_creditos(asesor=None):
     try:
-        supabase = get_supabase_client()
-        query = supabase.table("creditos").select("*")
-        if asesor: query = query.eq("asesor", asesor)
-        resp = query.execute()
+        q=get_supabase_client().table("creditos").select("*")
+        if asesor: q=q.eq("asesor",asesor)
+        resp=q.execute()
         if resp.data:
-            df = pd.DataFrame(resp.data)
-            for col in ["fecha_credito","fecha_pago"]:
-                if col in df.columns: df[col] = pd.to_datetime(df[col], errors="coerce")
-            if "pagado" not in df.columns: df["pagado"] = False
-            for col in ["cliente","asesor"]:
-                if col not in df.columns: df[col] = ""
-            if "monto" not in df.columns: df["monto"] = 0
+            df=pd.DataFrame(resp.data)
+            for c in ["fecha_credito","fecha_pago"]:
+                if c in df.columns: df[c]=pd.to_datetime(df[c],errors="coerce")
+            if "pagado" not in df.columns: df["pagado"]=False
+            for c in ["cliente","asesor"]:
+                if c not in df.columns: df[c]=""
+            if "monto" not in df.columns: df["monto"]=0
             return df
         return pd.DataFrame(columns=["id","cliente","monto","fecha_credito","pagado","fecha_pago","asesor"])
-    except Exception as e:
-        st.error(f"❌ Error: {e}")
-        return pd.DataFrame(columns=["id","cliente","monto","fecha_credito","pagado","fecha_pago","asesor"])
+    except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","cliente","monto","fecha_credito","pagado","fecha_pago","asesor"])
 
-def guardar_credito(cliente, monto, fecha, asesor):
+def guardar_credito(cliente,monto,fecha,asesor):
+    try: get_supabase_client().table("creditos").insert({"cliente":cliente,"monto":int(monto),"fecha_credito":fecha.strftime("%Y-%m-%d"),"pagado":False,"asesor":asesor}).execute(); return True
+    except Exception as e: st.error(f"Error:{e}"); return False
+
+def marcar_credito_pagado(cid):
+    try: get_supabase_client().table("creditos").update({"pagado":True,"fecha_pago":datetime.now().strftime("%Y-%m-%d")}).eq("id",cid).execute(); return True
+    except Exception as e: st.error(f"Error:{e}"); return False
+
+def buscar_por_serial(serial):
     try:
-        supabase = get_supabase_client()
-        supabase.table("creditos").insert({"cliente": cliente, "monto": int(monto), "fecha_credito": fecha.strftime("%Y-%m-%d"), "pagado": False, "asesor": asesor}).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
+        sb=get_supabase_client(); res={"equipo":None,"insumo":None,"bateria":None}
+        eq=sb.table("equipos").select("*").eq("Serial",serial).execute()
+        if eq.data: res["equipo"]=eq.data[0]
+        inv=sb.table("inventario").select("*").eq("serial",serial).execute()
+        if inv.data: res["insumo"]=inv.data[0]
+        bat=sb.table("baterias").select("*").eq("serial",serial).execute()
+        if bat.data: res["bateria"]=bat.data[0]
+        return res
+    except: return {"equipo":None,"insumo":None,"bateria":None}
 
-def marcar_credito_pagado(credito_id):
-    try:
-        supabase = get_supabase_client()
-        supabase.table("creditos").update({"pagado": True, "fecha_pago": datetime.now().strftime("%Y-%m-%d")}).eq("id", credito_id).execute()
-        return True
-    except Exception as e:
-        st.error(f"❌ Error: {e}"); return False
-
-# ==============================
+# ══════════════════════════════════════════════
 # SESIÓN
-# ==============================
-for k, v in [("authenticated", False), ("usuario", None), ("rol", None), ("nombre_usuario", None)]:
-    if k not in st.session_state: st.session_state[k] = v
+# ══════════════════════════════════════════════
+for k,v in [("authenticated",False),("usuario",None),("rol",None),("nombre_usuario",None)]:
+    if k not in st.session_state: st.session_state[k]=v
 
-# ==============================
+# ══════════════════════════════════════════════
 # LOGIN
-# ==============================
+# ══════════════════════════════════════════════
 if not st.session_state.authenticated:
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1,col2,col3 = st.columns([1,1.2,1])
     with col2:
-        st.markdown("# 🏥 Surtidor Médico")
-        st.markdown("### Sistema de Gestión de Inventario")
-        st.markdown("---")
-        usuario = st.text_input("👤 Usuario", placeholder="Ingresa tu usuario")
-        contraseña = st.text_input("🔑 Contraseña", type="password", placeholder="Ingresa tu contraseña")
-        ca, cb = st.columns(2)
-        with ca:
-            if st.button("✅ Iniciar Sesión", use_container_width=True):
-                ok, rol, nombre = verificar_usuario(usuario, contraseña)
-                if ok:
-                    st.session_state.authenticated = True
-                    st.session_state.usuario = usuario
-                    st.session_state.rol = rol
-                    st.session_state.nombre_usuario = nombre
-                    st.rerun()
-                else:
-                    st.error("❌ Usuario o contraseña incorrectos")
-        with cb:
-            if st.button("❌ Salir", use_container_width=True):
-                st.info("👋 Hasta luego")
-        st.markdown("---")
+        st.markdown("<div style='height:80px'></div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style='text-align:center;margin-bottom:32px;'>
+            <div style='font-size:2.8rem;'>🏥</div>
+            <h1 style='color:#e8ecf7;font-size:1.8rem;margin:8px 0 4px;'>Surtidor Médico</h1>
+            <p style='color:#6b7a9e;font-size:0.85rem;'>Sistema de Gestión de Inventario</p>
+        </div>
+        """, unsafe_allow_html=True)
+        usuario   = st.text_input("Usuario",    placeholder="Tu usuario")
+        contraseña = st.text_input("Contraseña", type="password", placeholder="Tu contraseña")
+        if st.button("Iniciar sesión →", use_container_width=True):
+            ok,rol,nombre = verificar_usuario(usuario,contraseña)
+            if ok:
+                st.session_state.authenticated=True
+                st.session_state.usuario=usuario
+                st.session_state.rol=rol
+                st.session_state.nombre_usuario=nombre
+                st.rerun()
+            else:
+                st.error("Usuario o contraseña incorrectos")
 
 else:
-    ROL = st.session_state.rol
+    ROL     = st.session_state.rol
     USUARIO = st.session_state.usuario
-    NOMBRE = st.session_state.nombre_usuario
+    NOMBRE  = st.session_state.nombre_usuario
 
-    # SIDEBAR
+    # ── SIDEBAR ──
     with st.sidebar:
-        st.title(f"👤 {NOMBRE}")
-        st.caption(f"{'🔑 Administrador' if ROL == 'admin' else '🧑‍💼 Asesor'}")
-        st.markdown(f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-        if st.button("🚪 Cerrar Sesión", use_container_width=True):
-            for k in list(st.session_state.keys()):
-                del st.session_state[k]
+        st.markdown(f"""
+        <div style='padding:16px 0 8px;'>
+            <div style='font-size:1.05rem;font-weight:700;color:#e8ecf7;'>{NOMBRE}</div>
+            <div style='font-size:0.72rem;color:#3b82f6;margin-top:2px;'>
+                {'🔑 Administrador' if ROL=='admin' else '🧑‍💼 Asesor'}
+            </div>
+            <div style='font-size:0.7rem;color:#4b5673;margin-top:4px;'>
+                {datetime.now().strftime('%d %b %Y — %H:%M')}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("---")
+        if st.button("Cerrar Sesión", use_container_width=True):
+            for k in list(st.session_state.keys()): del st.session_state[k]
             st.rerun()
         st.markdown("---")
-
-        if ROL == "admin":
-            menu = st.radio("📋 MENÚ", [
-                "📊 Dashboard", "👥 Clientes", "📦 Insumos (Cajas)",
-                "🖥️ Equipos", "🔋 Baterías", "📋 Asignaciones",
-                "🛒 Ventas", "💳 Créditos", "📜 Historial",
-                "📈 Reportes"
+        if ROL=="admin":
+            menu = st.radio("MENÚ",[
+                "Dashboard","Clientes","Insumos","Equipos","Baterías",
+                "Asignaciones","Ventas","Créditos","Historial","Reportes"
             ])
         else:
-            menu = st.radio("📋 MENÚ", [
-                "📊 Mi Resumen", "👥 Mis Clientes", "📦 Mis Insumos",
-                "🖥️ Mis Equipos", "🛒 Registrar Venta", "💳 Mis Créditos"
+            menu = st.radio("MENÚ",[
+                "Mi Resumen","Mis Clientes","Mis Insumos",
+                "Mis Equipos","Registrar Venta","Mis Créditos"
             ])
 
-    # ============================================================
-    # ADMIN - DASHBOARD
-    # ============================================================
-    if menu == "📊 Dashboard" and ROL == "admin":
-        st.title("📊 PANEL DE CONTROL")
+    # ════════════════════════════════════════
+    # ADMIN — DASHBOARD
+    # ════════════════════════════════════════
+    if menu=="Dashboard" and ROL=="admin":
+        st.title("Panel de Control")
+        clientes_df = get_cached_clientes()
+        inventario  = get_cached_inventario()
+        ventas      = get_cached_ventas()
+        creditos    = get_cached_creditos()
+        baterias    = cargar_baterias()
+        cred_pend   = creditos[creditos["pagado"]==False]["monto"].sum() if not creditos.empty else 0
+        bats_disp   = len(baterias[baterias["estado"]=="Disponible"]) if not baterias.empty else 0
 
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1: st.metric("👥 CLIENTES", len(get_cached_clientes()))
-        with col2: st.metric("📦 CAJAS", len(get_cached_inventario()))
-        with col3:
-            ventas = cargar_ventas()
-            st.metric("💳 VENTAS", f"${ventas['monto'].sum():,.0f}" if not ventas.empty else "$0")
-        with col4:
-            creditos = cargar_creditos()
-            cred_pend = creditos[creditos["pagado"] == False]["monto"].sum() if not creditos.empty else 0
-            st.metric("⚠️ PENDIENTE", f"${cred_pend:,.0f}")
-        with col5:
-            baterias = cargar_baterias()
-            st.metric("🔋 BATERÍAS", len(baterias[baterias["estado"] == "Disponible"]) if not baterias.empty else 0)
+        c1,c2,c3,c4,c5 = st.columns(5)
+        with c1: st.metric("Clientes",      len(clientes_df))
+        with c2: st.metric("Cajas",         len(inventario))
+        with c3: st.metric("Ventas",        f"${ventas['monto'].sum():,.0f}" if not ventas.empty else "$0")
+        with c4: st.metric("Pendiente",     f"${cred_pend:,.0f}")
+        with c5: st.metric("Baterías disp", bats_disp)
 
         st.markdown("---")
-        st.subheader("🔍 BUSCAR POR SERIAL")
-        serial_buscar = st.text_input("Ingresa serial", placeholder="EQ-XXXXX / INS-XXXXX / BAT-XXXXX")
-
-        if st.button("🔍 Buscar", use_container_width=True):
-            if serial_buscar:
-                resultado = buscar_por_serial(serial_buscar.strip().upper())
-                if resultado["equipo"]:
-                    eq = resultado["equipo"]
-                    st.success("✅ Equipo encontrado")
-                    st.write(f"🖥️ **{eq.get('Nombre','')}** | {eq.get('Serial','')} | {eq.get('Estado','')}")
-                elif resultado["insumo"]:
-                    inv = resultado["insumo"]
-                    st.success("✅ Insumo encontrado")
-                    st.write(f"📦 **{inv.get('Caja','')}** | ${int(inv.get('Cantidad',0))}")
-                elif resultado["bateria"]:
-                    bat = resultado["bateria"]
-                    st.success("✅ Batería encontrada")
-                    st.write(f"🔋 **{bat.get('nombre','')}** | {bat.get('serial','')}")
+        cl, cr = st.columns(2)
+        with cl:
+            st.subheader("🔍 Buscar por Serial")
+            sq = st.text_input("Serial", placeholder="EQ-XXXXX / INS-XXXXX / BAT-XXXXX", label_visibility="collapsed")
+            if st.button("Buscar", use_container_width=True) and sq:
+                res = buscar_por_serial(sq.strip().upper())
+                if res["equipo"]:
+                    eq=res["equipo"]; st.success(f"🖥️ **{eq.get('Nombre','')}** | {eq.get('Serial','')} | {eq.get('Estado','')}")
+                elif res["insumo"]:
+                    inv=res["insumo"]; st.success(f"📦 **{inv.get('Caja','')}** | Stock: {int(inv.get('Cantidad',0))}")
+                elif res["bateria"]:
+                    bat=res["bateria"]; st.success(f"🔋 **{bat.get('nombre','')}** | {bat.get('serial','')}")
                 else:
-                    st.warning(f"⚠️ No encontrado: **{serial_buscar}**")
+                    st.warning(f"No encontrado: {sq}")
+        with cr:
+            if not ventas.empty:
+                st.subheader("Últimas Ventas")
+                vd=ventas.tail(8)[["fecha","asesor","cliente","monto"]].copy()
+                vd["fecha"]=pd.to_datetime(vd["fecha"],errors="coerce").dt.strftime("%d/%m")
+                vd["monto"]=vd["monto"].apply(lambda x:f"${x:,.0f}")
+                st.dataframe(vd, use_container_width=True, hide_index=True)
 
-        st.markdown("---")
-        if not ventas.empty:
-            st.subheader("📊 Últimas Ventas")
-            vd = ventas.tail(10)[["fecha","asesor","cliente","caja","cantidad","monto"]].copy()
-            vd["fecha"] = pd.to_datetime(vd["fecha"], errors="coerce").dt.strftime("%d/%m")
-            vd["monto"] = vd["monto"].apply(lambda x: f"${x:,.0f}")
-            st.dataframe(vd, use_container_width=True, hide_index=True)
-
-    # ADMIN - CLIENTES
-    elif menu == "👥 Clientes" and ROL == "admin":
-        st.title("👥 CLIENTES")
-        clientes = get_cached_clientes(); asesores = get_cached_asesores()
-
-        tab1, tab2 = st.tabs(["📋 Ver", "➕ Agregar"])
-
+    # ════════════════════════════════════════
+    # ADMIN — CLIENTES
+    # ════════════════════════════════════════
+    elif menu=="Clientes" and ROL=="admin":
+        st.title("Clientes")
+        clientes=get_cached_clientes(); asesores=get_cached_asesores()
+        tab1,tab2 = st.tabs(["Ver todos","Agregar"])
         with tab1:
             if not clientes.empty:
-                st.dataframe(clientes[["nombre","cedula","telefono","asesor"]], use_container_width=True, hide_index=True)
+                fa=st.selectbox("Filtrar asesor",["Todos"]+asesores)
+                df_s=clientes if fa=="Todos" else clientes[clientes["asesor"]==fa]
+                st.dataframe(df_s[["nombre","cedula","telefono","asesor"]], use_container_width=True, hide_index=True)
                 st.markdown("---")
-                col1, col2 = st.columns(2)
-                with col1:
-                    sel = st.selectbox("Selecciona cliente para eliminar", clientes["nombre"].tolist())
-                with col2:
-                    if st.button("🗑️ Eliminar", use_container_width=True):
+                c1,c2=st.columns(2)
+                with c1: sel=st.selectbox("Eliminar cliente",clientes["nombre"].tolist())
+                with c2:
+                    st.markdown("<div style='height:28px'></div>",unsafe_allow_html=True)
+                    if st.button("Eliminar",use_container_width=True):
                         if eliminar_cliente(int(clientes[clientes["nombre"]==sel].iloc[0]["id"])):
-                            st.success("✅ Eliminado"); clear_all_cache(); st.rerun()
-            else:
-                st.info("📭 Sin clientes")
-
+                            st.success("Eliminado"); clear_all_cache(); st.rerun()
+            else: st.info("Sin clientes registrados")
         with tab2:
-            col1, col2 = st.columns(2)
-            with col1:
-                nombre = st.text_input("Nombre")
-                telefono = st.text_input("Teléfono")
-            with col2:
-                cedula = st.text_input("Cédula")
-                asesor_sel = st.selectbox("Asesor", asesores)
-
-            if st.button("💾 Guardar", use_container_width=True):
+            c1,c2=st.columns(2)
+            with c1: nombre=st.text_input("Nombre completo"); telefono=st.text_input("Teléfono")
+            with c2: cedula=st.text_input("Cédula"); asesor_s=st.selectbox("Asesor",asesores)
+            if st.button("Guardar cliente",use_container_width=True):
                 if nombre and cedula:
-                    if guardar_cliente(nombre, cedula, telefono, asesor_sel):
-                        st.success("✅ Agregado"); clear_all_cache(); st.rerun()
-                else:
-                    st.error("❌ Completa nombre y cédula")
+                    if guardar_cliente(nombre,cedula,telefono,asesor_s):
+                        st.success("Cliente agregado"); clear_all_cache(); st.rerun()
+                else: st.error("Nombre y cédula son obligatorios")
 
-    # ============================================================
-    # ADMIN - INSUMOS (CAJAS) — con edición de nombre y items
-    # ============================================================
-    elif menu == "📦 Insumos (Cajas)" and ROL == "admin":
-        st.title("📦 CAJAS E ITEMS")
-        inventario = get_cached_inventario()
+    # ════════════════════════════════════════
+    # ADMIN — INSUMOS
+    # ════════════════════════════════════════
+    elif menu=="Insumos" and ROL=="admin":
+        st.title("Insumos — Cajas")
+        inventario=get_cached_inventario()
+        tab1,tab2,tab3=st.tabs(["🔍 Buscar Items","➕ Nueva Caja","📝 Gestionar Items"])
 
-        tab1, tab2, tab3 = st.tabs(["🔍 Buscar Items", "➕ Nueva Caja", "📝 Gestionar Items"])
-
-        # ── TAB 1: Búsqueda global de items ──
         with tab1:
-            st.subheader("🔍 Buscar en todo el inventario")
-            busq = st.text_input(
-                "Buscar por nombre o referencia (serial)",
-                placeholder="Ej: sensor, SPO2, ITM-ABC123...",
-                key="busq_items_global"
-            )
-
+            busq=st.text_input("Buscar por nombre, descripción o serial",placeholder="Sensor, SPO2, ITM-ABC123…")
             if not inventario.empty:
-                # Cargar todos los items de todas las cajas
-                todos = []
-                for _, row_inv in inventario.iterrows():
-                    its = cargar_items_caja(int(row_inv["id"]))
+                todos=[]
+                for _,ri in inventario.iterrows():
+                    its=cargar_items_caja(int(ri["id"]))
                     if not its.empty:
-                        its = its.copy()
-                        its["nombre_caja"] = row_inv["Caja"]
-                        todos.append(its)
-
+                        its=its.copy(); its["nombre_caja"]=ri["Caja"]; todos.append(its)
                 if todos:
-                    df_todos = pd.concat(todos, ignore_index=True)
-
-                    # Búsqueda insensible a mayúsculas/minúsculas y tildes normalizadas
+                    df_t=pd.concat(todos,ignore_index=True)
                     if busq.strip():
-                        import unicodedata
-                        def normalizar(s):
-                            s = str(s).lower()
-                            return ''.join(
-                                c for c in unicodedata.normalize('NFD', s)
-                                if unicodedata.category(c) != 'Mn'
-                            )
-                        busq_norm = normalizar(busq)
-                        mask = (
-                            df_todos["nombre"].apply(normalizar).str.contains(busq_norm, na=False) |
-                            df_todos["descripcion"].apply(normalizar).str.contains(busq_norm, na=False) |
-                            df_todos.get("serial_item", pd.Series([""] * len(df_todos))).apply(normalizar).str.contains(busq_norm, na=False)
-                        )
-                        df_result = df_todos[mask]
-                    else:
-                        df_result = df_todos
+                        bn=normalizar(busq)
+                        mask=(df_t["nombre"].apply(normalizar).str.contains(bn,na=False)|
+                              df_t["descripcion"].apply(normalizar).str.contains(bn,na=False)|
+                              df_t.get("serial_item",pd.Series([""]*len(df_t))).apply(normalizar).str.contains(bn,na=False))
+                        df_r=df_t[mask]
+                    else: df_r=df_t
+                    st.caption(f"{'🔎 '+str(len(df_r))+' resultado(s)' if busq.strip() else str(len(df_r))+' items totales'}")
+                    if not df_r.empty:
+                        for cn in df_r["nombre_caja"].unique():
+                            ic=df_r[df_r["nombre_caja"]==cn]; val=calcular_valor_caja(ic)
+                            with st.expander(f"📦  {cn}   ·   {len(ic)} item(s)   ·   ${val:,.0f}"):
+                                rc=inventario[inventario["Caja"]==cn].iloc[0]
+                                c1,c2,c3=st.columns([3,1,1])
+                                with c1: nn=st.text_input("Nombre caja",value=str(rc["Caja"]),key=f"rn_{rc['id']}")
+                                with c2:
+                                    st.markdown("<div style='height:28px'></div>",unsafe_allow_html=True)
+                                    if st.button("✏️",key=f"rb_{rc['id']}",use_container_width=True):
+                                        if nn and nn!=rc["Caja"]:
+                                            if renombrar_caja(int(rc["id"]),nn): clear_all_cache(); st.rerun()
+                                with c3:
+                                    st.markdown("<div style='height:28px'></div>",unsafe_allow_html=True)
+                                    if st.button("🗑️",key=f"dc_{rc['id']}",use_container_width=True):
+                                        if eliminar_caja(int(rc["id"])): clear_all_cache(); st.rerun()
+                                d=ic[["nombre","descripcion","cantidad","precio_unitario"]].copy()
+                                d["subtotal"]=(ic["cantidad"]*ic["precio_unitario"]).apply(lambda x:f"${x:,.0f}")
+                                d["cantidad"]=d["cantidad"].apply(lambda x:f"{x} uds")
+                                d["precio_unitario"]=d["precio_unitario"].apply(lambda x:f"${x:,.0f}")
+                                st.dataframe(d,use_container_width=True,hide_index=True)
+                    else: st.warning(f"Sin resultados para '{busq}'")
+                else: st.info("No hay items registrados aún")
+            else: st.info("Sin cajas")
 
-                    st.caption(f"{'🔎 ' + str(len(df_result)) + ' resultado(s) encontrado(s)' if busq.strip() else str(len(df_result)) + ' items en total'}")
-
-                    if not df_result.empty:
-                        # Agrupar por caja para mostrar
-                        for caja_nombre in df_result["nombre_caja"].unique():
-                            items_caja_res = df_result[df_result["nombre_caja"] == caja_nombre]
-                            valor_caja = calcular_valor_caja(items_caja_res)
-                            with st.expander(f"📦 {caja_nombre} — {len(items_caja_res)} item(s) | ${valor_caja:,.0f}"):
-                                # Renombrar caja
-                                row_caja = inventario[inventario["Caja"] == caja_nombre].iloc[0]
-                                col_nom, col_btn, col_del = st.columns([3, 1, 1])
-                                with col_nom:
-                                    nuevo_nombre_caja = st.text_input(
-                                        "Nombre de la caja",
-                                        value=str(row_caja["Caja"]),
-                                        key=f"rename_caja_{row_caja['id']}"
-                                    )
-                                with col_btn:
-                                    st.write(""); st.write("")
-                                    if st.button("✏️ Renombrar", key=f"btn_rename_{row_caja['id']}", use_container_width=True):
-                                        if nuevo_nombre_caja and nuevo_nombre_caja != row_caja["Caja"]:
-                                            if renombrar_caja(int(row_caja["id"]), nuevo_nombre_caja):
-                                                st.success("✅ Renombrada"); clear_all_cache(); st.rerun()
-                                with col_del:
-                                    st.write(""); st.write("")
-                                    if st.button("🗑️ Eliminar caja", key=f"del_caja_{row_caja['id']}", use_container_width=True):
-                                        if eliminar_caja(int(row_caja["id"])):
-                                            st.success("✅"); clear_all_cache(); st.rerun()
-
-                                # Tabla de items
-                                display = items_caja_res[["nombre","descripcion","cantidad","precio_unitario"]].copy()
-                                display["subtotal"] = (items_caja_res["cantidad"] * items_caja_res["precio_unitario"]).apply(lambda x: f"${x:,.0f}")
-                                display["cantidad"] = display["cantidad"].apply(lambda x: f"{x} uds")
-                                display["precio_unitario"] = display["precio_unitario"].apply(lambda x: f"${x:,.0f}")
-                                st.dataframe(display, use_container_width=True, hide_index=True)
-                    else:
-                        st.warning(f"⚠️ No se encontró nada con '{busq}'")
-                else:
-                    st.info("📭 No hay items registrados aún")
-            else:
-                st.info("📭 Sin cajas")
-
-        # ── TAB 2: Nueva Caja ──
         with tab2:
-            caja_nombre = st.text_input("Nombre de la Caja", placeholder="Ej: Sensores SpO2 Adulto")
-            if st.button("💾 Crear Caja", use_container_width=True):
-                if caja_nombre:
-                    ok, serial = guardar_caja_nueva(caja_nombre)
-                    if ok:
-                        st.success(f"✅ Caja '{caja_nombre}' creada")
-                        st.info(f"📋 Serial: `{serial}`")
-                        clear_all_cache(); st.rerun()
-                else:
-                    st.error("❌ Ingresa nombre de caja")
+            cn2=st.text_input("Nombre de la caja",placeholder="Ej: Sensores SpO2 Adulto")
+            if st.button("Crear caja",use_container_width=True):
+                if cn2:
+                    ok,ser=guardar_caja_nueva(cn2)
+                    if ok: st.success(f"Caja creada — Serial: `{ser}`"); clear_all_cache(); st.rerun()
+                else: st.error("Ingresa un nombre")
 
-        # ── TAB 3: Gestionar Items ──
         with tab3:
-            st.subheader("📝 Agregar / Editar Items en Caja")
             if not inventario.empty:
-                caja_sel = st.selectbox("Selecciona Caja", inventario["Caja"].tolist())
-                caja_id = int(inventario[inventario["Caja"]==caja_sel].iloc[0]["id"])
-                items = cargar_items_caja(caja_id)
-
+                cs2=st.selectbox("Caja a gestionar",inventario["Caja"].tolist())
+                cid=int(inventario[inventario["Caja"]==cs2].iloc[0]["id"])
+                items=cargar_items_caja(cid)
                 st.markdown("---")
-
                 if not items.empty:
-                    st.markdown("**📋 Items Actuales:**")
-                    for _, item in items.iterrows():
-                        with st.expander(f"🔸 {item['nombre']} — x{int(item['cantidad'])} | ${int(item['precio_unitario']):,.0f} c/u"):
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                nuevo_nombre_item = st.text_input(
-                                    "Nombre",
-                                    value=str(item["nombre"]),
-                                    key=f"edit_nom_{item['id']}"
-                                )
-                                nueva_desc = st.text_input(
-                                    "Descripción",
-                                    value=str(item["descripcion"]),
-                                    key=f"edit_desc_{item['id']}"
-                                )
-                            with col2:
-                                nueva_cant = st.number_input(
-                                    "Cantidad",
-                                    value=int(item["cantidad"]),
-                                    min_value=0,
-                                    key=f"edit_cant_{item['id']}"
-                                )
-                                nuevo_precio = st.number_input(
-                                    "Precio Unitario",
-                                    value=int(item["precio_unitario"]),
-                                    step=100,
-                                    key=f"edit_price_{item['id']}"
-                                )
-
-                            col_save, col_del = st.columns(2)
-                            with col_save:
-                                if st.button("💾 Guardar Cambios", key=f"save_item_{item['id']}", use_container_width=True):
-                                    campos_upd = {
-                                        "nombre": nuevo_nombre_item,
-                                        "descripcion": nueva_desc,
-                                        "cantidad": int(nueva_cant),
-                                        "precio_unitario": int(nuevo_precio),
-                                    }
-                                    if actualizar_item_caja(int(item["id"]), campos_upd):
-                                        st.success("✅ Item actualizado"); st.rerun()
-                            with col_del:
-                                if st.button("🗑️ Eliminar", key=f"del_item_{item['id']}", use_container_width=True):
-                                    if eliminar_item_caja(int(item["id"])):
-                                        st.success("✅"); st.rerun()
-
+                    st.markdown(f"**Items en '{cs2}'**")
+                    for _,item in items.iterrows():
+                        with st.expander(f"🔸 {item['nombre']}  ·  x{int(item['cantidad'])}  ·  ${int(item['precio_unitario']):,.0f}/u"):
+                            c1,c2=st.columns(2)
+                            with c1:
+                                nn_i=st.text_input("Nombre",value=str(item["nombre"]),key=f"en_{item['id']}")
+                                nd_i=st.text_input("Desc",value=str(item["descripcion"]),key=f"ed_{item['id']}")
+                            with c2:
+                                nc_i=st.number_input("Cantidad",value=int(item["cantidad"]),min_value=0,key=f"ec_{item['id']}")
+                                np_i=st.number_input("Precio",value=int(item["precio_unitario"]),step=100,key=f"ep_{item['id']}")
+                            cs3,cd=st.columns(2)
+                            with cs3:
+                                if st.button("Guardar",key=f"si_{item['id']}",use_container_width=True):
+                                    if actualizar_item_caja(int(item["id"]),{"nombre":nn_i,"descripcion":nd_i,"cantidad":int(nc_i),"precio_unitario":int(np_i)}):
+                                        st.success("Actualizado"); st.rerun()
+                            with cd:
+                                if st.button("Eliminar",key=f"di_{item['id']}",use_container_width=True):
+                                    if eliminar_item_caja(int(item["id"])): st.rerun()
                     st.markdown("---")
+                st.markdown("**Agregar item**")
+                c1,c2=st.columns(2)
+                with c1:
+                    i_n=st.text_input("Nombre",placeholder="Sensor SpO2",key=f"in_{cid}")
+                    i_d=st.text_input("Descripción",placeholder="Adulto reutilizable",key=f"id_{cid}")
+                with c2:
+                    i_c=st.number_input("Cantidad",min_value=1,value=1,key=f"ic_{cid}")
+                    i_p=st.number_input("Precio ($)",min_value=0,value=1000,step=100,key=f"ip_{cid}")
+                if st.button("Agregar item",use_container_width=True):
+                    if i_n and i_p>0:
+                        ok,_=guardar_item_caja(cid,i_n,i_d,i_c,i_p)
+                        if ok: st.success("Item agregado"); st.rerun()
+                    else: st.error("Nombre y precio son obligatorios")
+            else: st.warning("Crea una caja primero")
 
-                st.markdown("**➕ Nuevo Item:**")
-                col1, col2 = st.columns(2)
-                with col1:
-                    item_nombre = st.text_input("Nombre Item", placeholder="Sensor SpO2", key=f"item_nom_{caja_id}")
-                    item_desc = st.text_input("Descripción", placeholder="Adulto, reutilizable", key=f"item_desc_{caja_id}")
-                with col2:
-                    item_cantidad = st.number_input("Cantidad", min_value=1, value=1, key=f"item_cant_{caja_id}")
-                    item_precio = st.number_input("Precio Unitario ($)", min_value=0, value=1000, step=100, key=f"item_precio_{caja_id}")
-
-                if st.button("💾 Agregar Item", use_container_width=True):
-                    if item_nombre and item_precio > 0:
-                        ok, serial = guardar_item_caja(
-                            caja_id, item_nombre, item_desc,
-                            item_cantidad, item_precio
-                        )
-                        if ok:
-                            st.success("✅ Item agregado"); st.rerun()
-                    else:
-                        st.error("❌ Completa nombre y precio")
-            else:
-                st.warning("⚠️ Crea una caja primero")
-
-    # ADMIN - EQUIPOS
-    elif menu == "🖥️ Equipos" and ROL == "admin":
-        st.title("🖥️ EQUIPOS")
-        equipos = cargar_equipos(); asesores = get_cached_asesores()
-
-        tab1, tab2 = st.tabs(["📋 Ver", "➕ Agregar"])
-
+    # ════════════════════════════════════════
+    # ADMIN — EQUIPOS
+    # ════════════════════════════════════════
+    elif menu=="Equipos" and ROL=="admin":
+        st.title("Equipos")
+        equipos=cargar_equipos(); asesores=get_cached_asesores()
+        tab1,tab2=st.tabs(["Ver equipos","Agregar"])
         with tab1:
             if not equipos.empty:
-                for _, row in equipos.iterrows():
-                    with st.expander(f"{COLOR_ESTADO.get(row['Estado'],'⚪')} {row['Nombre']} | {row['Serial']}"):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"💰 ${int(row.get('Precio',0)):,.0f}")
-                            st.write(f"🧑‍💼 {row.get('Asesor_Asignado','')}")
-                        with col2:
-                            st.write(f"👤 {row.get('Cliente_Asignado','')}")
-
-                        idx_e = ESTADOS_EQUIPO.index(row["Estado"]) if row["Estado"] in ESTADOS_EQUIPO else 0
-                        ne = st.selectbox("Estado", ESTADOS_EQUIPO, index=idx_e, key=f"e_{row['id']}")
-
-                        oa = [""]+asesores
-                        ia = oa.index(row.get("Asesor_Asignado","")) if row.get("Asesor_Asignado","") in oa else 0
-                        na = st.selectbox("Asesor", oa, index=ia, key=f"a_{row['id']}")
-
-                        nc = st.text_input("Comentario", value=str(row.get("Comentarios","")), key=f"c_{row['id']}")
-
-                        col_a, col_b = st.columns(2)
-                        with col_a:
-                            if st.button("💾 Actualizar", key=f"u_{row['id']}", use_container_width=True):
-                                if actualizar_equipo(int(row["id"]), {"Estado":ne,"Asesor_Asignado":na,"Comentarios":nc}):
-                                    st.success("✅"); st.rerun()
-                        with col_b:
-                            if st.button("🗑️ Eliminar", key=f"d_{row['id']}", use_container_width=True):
-                                if eliminar_equipo(int(row["id"])):
-                                    st.success("✅"); st.rerun()
-            else:
-                st.info("📭 Sin equipos")
-
+                fe=st.selectbox("Estado",["Todos"]+ESTADOS_EQUIPO)
+                ef=equipos if fe=="Todos" else equipos[equipos["Estado"]==fe]
+                for _,row in ef.iterrows():
+                    with st.expander(f"{COLOR_ESTADO.get(row['Estado'],'⚪')}  {row['Nombre']}   |   {row['Serial']}"):
+                        c1,c2=st.columns(2)
+                        with c1: st.caption("Precio"); st.write(f"${int(row.get('Precio',0)):,.0f}")
+                        with c2: st.caption("Cliente"); st.write(row.get("Cliente_Asignado","—"))
+                        idx_e=ESTADOS_EQUIPO.index(row["Estado"]) if row["Estado"] in ESTADOS_EQUIPO else 0
+                        ne=st.selectbox("Estado",ESTADOS_EQUIPO,index=idx_e,key=f"e_{row['id']}")
+                        oa=[""]+asesores; ia=oa.index(row.get("Asesor_Asignado","")) if row.get("Asesor_Asignado","") in oa else 0
+                        na=st.selectbox("Asesor",oa,index=ia,key=f"a_{row['id']}")
+                        nc=st.text_input("Comentario",value=str(row.get("Comentarios","")),key=f"c_{row['id']}")
+                        ca,cb=st.columns(2)
+                        with ca:
+                            if st.button("Guardar",key=f"u_{row['id']}",use_container_width=True):
+                                if actualizar_equipo(int(row["id"]),{"Estado":ne,"Asesor_Asignado":na,"Comentarios":nc}):
+                                    st.success("Actualizado"); st.rerun()
+                        with cb:
+                            if st.button("Eliminar",key=f"d_{row['id']}",use_container_width=True):
+                                if eliminar_equipo(int(row["id"])): st.rerun()
+            else: st.info("Sin equipos")
         with tab2:
-            col1, col2 = st.columns(2)
-            with col1:
-                ne2 = st.text_input("Nombre del equipo")
-                se2 = st.text_input("Serial / Código")
-            with col2:
-                pe2 = st.number_input("Precio ($)", min_value=0, value=0, step=1000)
-                ee2 = st.selectbox("Estado inicial", ESTADOS_EQUIPO)
-
-            ae2 = st.selectbox("Asesor asignado", [""] + asesores)
-            ce2 = st.text_input("Cliente (opcional)")
-
-            if st.button("💾 Agregar Equipo", use_container_width=True):
+            c1,c2=st.columns(2)
+            with c1: ne2=st.text_input("Nombre"); se2=st.text_input("Serial (opcional)")
+            with c2: pe2=st.number_input("Precio ($)",min_value=0,value=0,step=1000); ee2=st.selectbox("Estado inicial",ESTADOS_EQUIPO)
+            ae2=st.selectbox("Asesor",[""])
+            ce2=st.text_input("Cliente (opcional)")
+            if st.button("Agregar equipo",use_container_width=True):
                 if ne2:
-                    sf = se2 if se2 else generar_serial("EQ")
-                    ok, sr = guardar_equipo_nuevo({"Nombre":ne2,"Serial":sf,"Estado":ee2,"Precio":int(pe2),"Asesor_Asignado":ae2,"Cliente_Asignado":ce2})
-                    if ok:
-                        st.success("✅ Equipo agregado")
-                        st.info(f"📋 Serial: `{sr}`")
-                        st.rerun()
-                else:
-                    st.error("❌ Ingresa nombre")
+                    sf=se2 or generar_serial("EQ")
+                    ok,sr=guardar_equipo_nuevo({"Nombre":ne2,"Serial":sf,"Estado":ee2,"Precio":int(pe2),"Asesor_Asignado":ae2,"Cliente_Asignado":ce2})
+                    if ok: st.success(f"Equipo agregado — Serial: `{sr}`"); st.rerun()
+                else: st.error("El nombre es obligatorio")
 
-    # ADMIN - BATERÍAS
-    elif menu == "🔋 Baterías" and ROL == "admin":
-        st.title("🔋 BATERÍAS")
-        baterias = cargar_baterias()
-
+    # ════════════════════════════════════════
+    # ADMIN — BATERÍAS
+    # ════════════════════════════════════════
+    elif menu=="Baterías" and ROL=="admin":
+        st.title("Baterías")
+        baterias=cargar_baterias()
         if not baterias.empty:
-            col1, col2, col3, col4 = st.columns(4)
-            with col1: st.metric("🔋 Total", len(baterias))
-            with col2: st.metric("🟢 Disponibles", len(baterias[baterias["estado"]=="Disponible"]))
-            with col3: st.metric("🔵 En Uso", len(baterias[baterias["estado"]=="En uso"]))
-            with col4: st.metric("🔴 Dañadas", len(baterias[baterias["estado"]=="Dañada"]))
+            c1,c2,c3,c4=st.columns(4)
+            with c1: st.metric("Total",len(baterias))
+            with c2: st.metric("Disponibles",len(baterias[baterias["estado"]=="Disponible"]))
+            with c3: st.metric("En Uso",len(baterias[baterias["estado"]=="En uso"]))
+            with c4: st.metric("Dañadas",len(baterias[baterias["estado"]=="Dañada"]))
             st.markdown("---")
-
-        tab1, tab2, tab3 = st.tabs(["📋 Ver", "➕ Agregar", "📊 Estadísticas"])
-
+        tab1,tab2,tab3=st.tabs(["Ver","Agregar","Estadísticas"])
         with tab1:
             if not baterias.empty:
-                fb_est = st.selectbox("Filtrar estado", ["Todos"]+ESTADOS_BATERIA)
-                bf = baterias.copy() if fb_est == "Todos" else baterias[baterias["estado"]==fb_est]
-
-                for _, row in bf.iterrows():
-                    eb = row.get("estado","")
-                    with st.expander(f"{COLOR_BATERIA.get(eb,'⚪')} {row['nombre']} | {row['serial']}"):
-                        st.write(f"🏭 **Proveedor:** {row.get('proveedor','')}")
-                        st.write(f"💰 **Costo:** ${int(row.get('costo',0)):,.0f}")
-
-                        idx_eb = ESTADOS_BATERIA.index(eb) if eb in ESTADOS_BATERIA else 0
-                        neb = st.selectbox("Estado", ESTADOS_BATERIA, index=idx_eb, key=f"bst_{row['id']}")
-
-                        if st.button("💾 Actualizar", key=f"bupd_{row['id']}", use_container_width=True):
-                            if actualizar_bateria(int(row["id"]), {"estado":neb}):
-                                st.success("✅"); st.rerun()
-            else:
-                st.info("📭 Sin baterías")
-
+                fb=st.selectbox("Estado",["Todos"]+ESTADOS_BATERIA)
+                bf=baterias if fb=="Todos" else baterias[baterias["estado"]==fb]
+                for _,row in bf.iterrows():
+                    eb=row.get("estado","")
+                    with st.expander(f"{COLOR_BATERIA.get(eb,'⚪')}  {row['nombre']}   |   {row['serial']}"):
+                        c1,c2=st.columns(2)
+                        with c1: st.write(f"**Proveedor:** {row.get('proveedor','—')}")
+                        with c2: st.write(f"**Costo:** ${int(row.get('costo',0)):,.0f}")
+                        idx_eb=ESTADOS_BATERIA.index(eb) if eb in ESTADOS_BATERIA else 0
+                        neb=st.selectbox("Estado",ESTADOS_BATERIA,index=idx_eb,key=f"bst_{row['id']}")
+                        if st.button("Actualizar",key=f"bupd_{row['id']}",use_container_width=True):
+                            if actualizar_bateria(int(row["id"]),{"estado":neb}):
+                                st.success("Actualizado"); st.rerun()
+            else: st.info("Sin baterías")
         with tab2:
-            col1, col2 = st.columns(2)
-            with col1:
-                nb_nombre = st.text_input("Nombre / Modelo")
-                nb_proveedor = st.text_input("Proveedor")
-            with col2:
-                nb_costo = st.number_input("Costo ($)", min_value=0, value=0, step=1000)
-                nb_estado = st.selectbox("Estado", ESTADOS_BATERIA)
-
-            if st.button("💾 Registrar", use_container_width=True):
-                if nb_nombre and nb_proveedor:
-                    ok, sb = guardar_bateria(nb_nombre, nb_proveedor, datetime.now().date(), 0, nb_costo, nb_estado, "", "", "")
-                    if ok:
-                        st.success("✅ Batería registrada")
-                        st.info(f"📋 Serial: `{sb}`")
-                        st.rerun()
-                else:
-                    st.error("❌ Completa todos")
-
+            c1,c2=st.columns(2)
+            with c1: nb_n=st.text_input("Nombre / Modelo"); nb_p=st.text_input("Proveedor")
+            with c2: nb_c=st.number_input("Costo ($)",min_value=0,value=0,step=1000); nb_e=st.selectbox("Estado",ESTADOS_BATERIA)
+            if st.button("Registrar batería",use_container_width=True):
+                if nb_n and nb_p:
+                    ok,sb_s=guardar_bateria(nb_n,nb_p,datetime.now().date(),0,nb_c,nb_e,"","","")
+                    if ok: st.success(f"Registrada — Serial: `{sb_s}`"); st.rerun()
+                else: st.error("Nombre y proveedor son obligatorios")
         with tab3:
             if not baterias.empty:
-                st.subheader("📊 Distribución")
-                est_c = baterias["estado"].value_counts()
-                fig = px.pie(values=est_c.values, names=est_c.index)
-                st.plotly_chart(fig, use_container_width=True)
+                ec=baterias["estado"].value_counts()
+                fig=px.pie(values=ec.values,names=ec.index,color_discrete_sequence=["#3b82f6","#22c55e","#ef4444","#f59e0b","#6b7280"])
+                fig.update_layout(paper_bgcolor="#151822",plot_bgcolor="#151822",font_color="#c9d1e8")
+                st.plotly_chart(fig,use_container_width=True)
 
-    # ADMIN - ASIGNACIONES
-    elif menu == "📋 Asignaciones" and ROL == "admin":
-        st.title("📋 ASIGNACIONES")
-        asesores = get_cached_asesores(); inventario = get_cached_inventario()
-
-        tab1, tab2 = st.tabs(["📋 Ver", "➕ Nueva"])
+    # ════════════════════════════════════════
+    # ADMIN — ASIGNACIONES (+ comentario + auto-asignación)
+    # ════════════════════════════════════════
+    elif menu=="Asignaciones" and ROL=="admin":
+        st.title("Asignaciones")
+        asesores=get_cached_asesores(); inventario=get_cached_inventario()
+        tab1,tab2=st.tabs(["Ver asignaciones","Nueva asignación"])
 
         with tab1:
-            asignaciones = cargar_asignaciones()
+            asignaciones=get_cached_asignaciones()
             if not asignaciones.empty:
-                for asesor in asesores:
-                    asig = asignaciones[asignaciones["asesor"]==asesor]
-                    if not asig.empty:
-                        with st.expander(f"🧑‍💼 {asesor} — {int(asig['cantidad'].sum())} uds"):
-                            for _, arow in asig.iterrows():
-                                st.markdown(f"📦 **{arow['caja']}** | {int(arow['cantidad'])} uds")
-                                if st.button("🗑️ Eliminar", key=f"del_asig_{arow['id']}", use_container_width=True):
+                fas=st.selectbox("Filtrar asesor",["Todos"]+asesores)
+                df_as=asignaciones if fas=="Todos" else asignaciones[asignaciones["asesor"]==fas]
+                lista_a=asesores if fas=="Todos" else [fas]
+                for asesor in lista_a:
+                    asig=df_as[df_as["asesor"]==asesor]
+                    if asig.empty: continue
+                    with st.expander(f"🧑‍💼  {asesor}   ·   {int(asig['cantidad'].sum())} uds   ·   {len(asig)} registro(s)"):
+                        for _,arow in asig.iterrows():
+                            c1,c2,c3,c4=st.columns([2,1,3,1])
+                            with c1: st.write(f"📦 **{arow['caja']}**")
+                            with c2: st.write(f"{int(arow['cantidad'])} uds")
+                            with c3:
+                                com=arow.get("comentario","") or ""
+                                if com: st.caption(f"💬 {com}")
+                            with c4:
+                                if st.button("Eliminar",key=f"da_{arow['id']}",use_container_width=True):
                                     try:
-                                        supabase = get_supabase_client()
-                                        supabase.table("asignaciones").delete().eq("id",int(arow["id"])).execute()
-                                        st.success("✅"); st.rerun()
-                                    except Exception as e:
-                                        st.error(f"❌ {e}")
-            else:
-                st.info("📭 Sin asignaciones")
+                                        get_supabase_client().table("asignaciones").delete().eq("id",int(arow["id"])).execute()
+                                        clear_all_cache(); st.rerun()
+                                    except Exception as e: st.error(e)
+            else: st.info("Sin asignaciones registradas")
 
         with tab2:
             if not inventario.empty:
-                col1, col2, col3 = st.columns(3)
-                with col1: ad = st.selectbox("Asesor", asesores)
-                with col2: cs = st.selectbox("Caja", inventario["Caja"].tolist())
-                with col3:
-                    disp = int(inventario[inventario["Caja"]==cs].iloc[0]["Cantidad"])
-                    st.metric("Disponible", disp)
+                c1,c2=st.columns(2)
+                with c1:
+                    # ✅ Cualquier asesor se puede asignar a sí mismo o a otro
+                    ad=st.selectbox("Asesor destinatario",asesores,key="na_asesor")
+                with c2:
+                    cs_a=st.selectbox("Caja",inventario["Caja"].tolist(),key="na_caja")
+                disp=int(inventario[inventario["Caja"]==cs_a].iloc[0]["Cantidad"])
+                c3,c4=st.columns(2)
+                with c3: ca2=st.number_input("Cantidad",min_value=1,max_value=max(disp,1),value=1)
+                with c4: st.metric("Stock disponible",disp)
+                fa2=st.date_input("Fecha")
+                # ✅ Comentario en la asignación
+                com2=st.text_input("Comentario (opcional)",placeholder="Ej: Ruta norte, reponer stock…")
+                if st.button("Asignar",use_container_width=True):
+                    if ca2<=disp:
+                        rc=inventario[inventario["Caja"]==cs_a].iloc[0]
+                        actualizar_caja(int(rc["id"]),{"Cantidad":disp-ca2})
+                        if guardar_asignacion(ad,cs_a,ca2,fa2,com2):
+                            st.success(f"✅ {ca2} uds de '{cs_a}' asignadas a {ad}")
+                            clear_all_cache(); st.rerun()
+                    else: st.error("Stock insuficiente")
+            else: st.error("No hay cajas registradas")
 
-                ca2 = st.number_input("Cantidad", min_value=1, max_value=max(disp, 1), value=1)
-                fa2 = st.date_input("Fecha")
-
-                if st.button("📋 Asignar", use_container_width=True):
-                    if ca2 <= disp:
-                        row_c = inventario[inventario["Caja"]==cs].iloc[0]
-                        actualizar_caja(int(row_c["id"]), {"Cantidad":disp-ca2})
-                        if guardar_asignacion(ad, cs, ca2, fa2):
-                            st.success("✅"); st.rerun()
-                    else:
-                        st.error("❌ Stock insuficiente")
-            else:
-                st.error("❌ Sin cajas")
-
-    # ADMIN - VENTAS
-    elif menu == "🛒 Ventas" and ROL == "admin":
-        st.title("🛒 VENTAS")
-        inventario = get_cached_inventario(); clientes = get_cached_clientes(); asesores = get_cached_asesores()
-
-        tab1, tab2 = st.tabs(["➕ Nueva", "📋 Historial"])
-
+    # ════════════════════════════════════════
+    # ADMIN — VENTAS
+    # ════════════════════════════════════════
+    elif menu=="Ventas" and ROL=="admin":
+        st.title("Ventas")
+        inventario=get_cached_inventario(); clientes=get_cached_clientes(); asesores=get_cached_asesores()
+        tab1,tab2=st.tabs(["Nueva venta","Historial"])
         with tab1:
-            col1, col2 = st.columns(2)
-            with col1: fecha = st.date_input("Fecha")
-            with col2: av = st.selectbox("Asesor", asesores)
-
-            cli_f = clientes[clientes["asesor"]==av] if not clientes.empty else pd.DataFrame()
-            lcli = cli_f["nombre"].tolist() if not cli_f.empty else []
-            cv = st.selectbox("Cliente", lcli if lcli else ["Sin clientes"])
-
-            col3, col4 = st.columns(2)
-            with col3: cajav = st.selectbox("Caja", inventario["Caja"].tolist() if not inventario.empty else ["Sin cajas"])
-            with col4:
-                if not inventario.empty and cajav != "Sin cajas":
-                    st.metric("Disponible", int(inventario[inventario["Caja"]==cajav].iloc[0]["Cantidad"]))
-
-            col5, col6 = st.columns(2)
-            with col5: cantv = st.number_input("Cantidad", min_value=1, value=1)
-            with col6:
-                valu = 0
+            c1,c2=st.columns(2)
+            with c1: fecha=st.date_input("Fecha")
+            with c2: av=st.selectbox("Asesor",asesores)
+            cli_f=clientes[clientes["asesor"]==av] if not clientes.empty else pd.DataFrame()
+            lcli=cli_f["nombre"].tolist() if not cli_f.empty else []
+            cv=st.selectbox("Cliente",lcli if lcli else ["Sin clientes"])
+            c3,c4=st.columns(2)
+            with c3: cajav=st.selectbox("Caja",inventario["Caja"].tolist() if not inventario.empty else ["Sin cajas"])
+            with c4:
                 if not inventario.empty and cajav!="Sin cajas":
-                    caja_id = int(inventario[inventario["Caja"]==cajav].iloc[0]["id"])
-                    items = cargar_items_caja(caja_id)
-                    valu = int((items["precio_unitario"].mean())) if not items.empty else 0
-                st.metric("Precio Unitario", f"${valu:,.0f}")
-
-            montov = cantv * valu
-            st.metric("Monto Total", f"${montov:,.0f}")
-            ecv = st.checkbox("Venta a Crédito")
-
-            if st.button("💾 Guardar Venta", use_container_width=True):
-                if cv != "Sin clientes" and cajav != "Sin cajas":
-                    crow = inventario[inventario["Caja"]==cajav].iloc[0]
-                    nc = int(crow["Cantidad"])-cantv
-                    if nc < 0:
-                        st.error("❌ Stock insuficiente")
+                    st.metric("Stock",int(inventario[inventario["Caja"]==cajav].iloc[0]["Cantidad"]))
+            c5,c6=st.columns(2)
+            with c5: cantv=st.number_input("Cantidad",min_value=1,value=1)
+            with c6:
+                valu=0
+                if not inventario.empty and cajav!="Sin cajas":
+                    cid4=int(inventario[inventario["Caja"]==cajav].iloc[0]["id"])
+                    itms=cargar_items_caja(cid4)
+                    valu=int(itms["precio_unitario"].mean()) if not itms.empty else 0
+                st.metric("Precio unitario",f"${valu:,.0f}")
+            montov=cantv*valu; st.metric("Monto total",f"${montov:,.0f}")
+            ecv=st.checkbox("Venta a crédito")
+            if st.button("Registrar venta",use_container_width=True):
+                if cv!="Sin clientes" and cajav!="Sin cajas":
+                    crow=inventario[inventario["Caja"]==cajav].iloc[0]
+                    nc=int(crow["Cantidad"])-cantv
+                    if nc<0: st.error("Stock insuficiente")
                     else:
-                        actualizar_caja(int(crow["id"]), {"Cantidad":nc})
-                        guardar_venta(fecha, cv, cajav, cantv, valu, montov, ecv, av)
-                        if ecv:
-                            guardar_credito(cv, montov, fecha, av)
-                        st.success("✅ Venta guardada"); st.rerun()
-                else:
-                    st.error("❌ Completa campos")
-
+                        actualizar_caja(int(crow["id"]),{"Cantidad":nc})
+                        guardar_venta(fecha,cv,cajav,cantv,valu,montov,ecv,av)
+                        if ecv: guardar_credito(cv,montov,fecha,av)
+                        st.success("Venta registrada"); clear_all_cache(); st.rerun()
+                else: st.error("Completa todos los campos")
         with tab2:
-            ventas = cargar_ventas()
+            ventas=get_cached_ventas()
             if not ventas.empty:
-                vd = ventas[["fecha","asesor","cliente","cantidad","monto"]].copy()
-                vd["fecha"] = pd.to_datetime(vd["fecha"], errors="coerce").dt.strftime("%d/%m/%Y")
-                vd["monto"] = vd["monto"].apply(lambda x: f"${x:,.0f}")
-                st.dataframe(vd, use_container_width=True, hide_index=True)
-            else:
-                st.info("📭 Sin ventas")
+                vd=ventas[["fecha","asesor","cliente","caja","cantidad","monto"]].copy()
+                vd["fecha"]=pd.to_datetime(vd["fecha"],errors="coerce").dt.strftime("%d/%m/%Y")
+                vd["monto"]=vd["monto"].apply(lambda x:f"${x:,.0f}")
+                st.dataframe(vd,use_container_width=True,hide_index=True)
+            else: st.info("Sin ventas")
 
-    # ADMIN - CRÉDITOS
-    elif menu == "💳 Créditos" and ROL == "admin":
-        st.title("💳 CRÉDITOS")
-        creditos = cargar_creditos(); asesores_cred = get_cached_asesores()
-
+    # ════════════════════════════════════════
+    # ADMIN — CRÉDITOS
+    # ════════════════════════════════════════
+    elif menu=="Créditos" and ROL=="admin":
+        st.title("Créditos")
+        creditos=get_cached_creditos(); asesores_c=get_cached_asesores()
         if not creditos.empty:
-            pend = creditos[creditos["pagado"]==False]
-            col1, col2, col3 = st.columns(3)
-            with col1: st.metric("💳 PENDIENTE", f"${pend['monto'].sum():,.0f}")
-            with col2: st.metric("👥 CLIENTES", pend["cliente"].nunique())
-            with col3: st.metric("📋 REGISTROS", len(pend))
-
+            pend=creditos[creditos["pagado"]==False]
+            c1,c2,c3=st.columns(3)
+            with c1: st.metric("Monto pendiente",f"${pend['monto'].sum():,.0f}")
+            with c2: st.metric("Clientes con deuda",pend["cliente"].nunique())
+            with c3: st.metric("Registros",len(pend))
             st.markdown("---")
-            filtro_ac = st.selectbox("Filtrar por asesor", ["Todos"]+asesores_cred)
-
-            for ac in (asesores_cred if filtro_ac=="Todos" else [filtro_ac]):
-                ca = creditos[creditos["asesor"]==ac]
+            filtro=st.selectbox("Filtrar asesor",["Todos"]+asesores_c)
+            for ac in (asesores_c if filtro=="Todos" else [filtro]):
+                ca=creditos[creditos["asesor"]==ac]
                 if ca.empty: continue
+                tot=ca[ca["pagado"]==False]["monto"].sum()
+                with st.expander(f"🧑‍💼  {ac}   ·   Pendiente: ${tot:,.0f}"):
+                    for _,row in ca.iterrows():
+                        c1,c2,c3,c4=st.columns([2,1.5,1.5,1])
+                        with c1: st.write(f"👤 {row['cliente']}")
+                        with c2: st.write(f"${int(row['monto']):,.0f}")
+                        with c3:
+                            fc=row["fecha_credito"].strftime("%d/%m/%Y") if pd.notna(row["fecha_credito"]) else "—"
+                            st.write(fc)
+                        with c4:
+                            if row["pagado"]: st.caption("✓")
+                            else:
+                                if st.button("Pagar",key=f"p_{row['id']}",use_container_width=True):
+                                    if marcar_credito_pagado(int(row["id"])): clear_all_cache(); st.rerun()
+        else: st.info("Sin créditos")
 
-                with st.expander(f"🧑‍💼 {ac}"):
-                    for _, row in ca.iterrows():
-                        col1, col2, col3, col4 = st.columns([2, 1.5, 1.5, 1])
-                        with col1: st.write(f"👤 {row['cliente']}")
-                        with col2: st.write(f"💰 ${int(row['monto']):,.0f}")
-                        with col3:
-                            fc = row["fecha_credito"].strftime("%d/%m/%Y") if pd.notna(row["fecha_credito"]) else ""
-                            st.write(f"📅 {fc}")
-                        with col4:
-                            if not row["pagado"]:
-                                if st.button("✓", key=f"p_{row['id']}", use_container_width=True):
-                                    if marcar_credito_pagado(int(row["id"])):
-                                        st.success("✅"); st.rerun()
-        else:
-            st.info("✅ Sin créditos")
-
-    # ============================================================
-    # ADMIN - HISTORIAL  ✅ sin créditos
-    # ============================================================
-    elif menu == "📜 Historial" and ROL == "admin":
-        st.title("📜 HISTORIAL DE MOVIMIENTOS")
-        st.caption("Solo muestra asignaciones y ventas. Los créditos tienen su propio módulo.")
-
-        historial = cargar_historial_asignaciones()
-
+    # ════════════════════════════════════════
+    # ADMIN — HISTORIAL
+    # ════════════════════════════════════════
+    elif menu=="Historial" and ROL=="admin":
+        st.title("Historial de Movimientos")
+        st.caption("Asignaciones y ventas — los créditos tienen su propio módulo.")
+        historial=cargar_historial_asignaciones()
         if not historial.empty:
-            col1, col2, col3 = st.columns(3)
-            with col1: st.metric("Total registros", len(historial))
-            with col2:
-                ventas_h = historial[historial["tipo"]=="venta"]
-                st.metric("Ventas registradas", len(ventas_h))
-            with col3:
-                asig_h = historial[historial["tipo"]=="asignacion"]
-                st.metric("Asignaciones", len(asig_h))
-
+            c1,c2,c3=st.columns(3)
+            with c1: st.metric("Total registros",len(historial))
+            with c2: st.metric("Ventas",len(historial[historial["tipo"]=="venta"]))
+            with c3: st.metric("Asignaciones",len(historial[historial["tipo"]=="asignacion"]))
             st.markdown("---")
+            cf1,cf2,cf3=st.columns(3)
+            with cf1: ft=st.selectbox("Tipo",["Todos"]+historial["tipo"].unique().tolist())
+            with cf2: fa=st.selectbox("Asesor",["Todos"]+historial["asesor"].unique().tolist())
+            with cf3: fn=st.selectbox("Mostrar",[20,50,100,200],index=0)
+            hf=historial.copy()
+            if ft!="Todos": hf=hf[hf["tipo"]==ft]
+            if fa!="Todos": hf=hf[hf["asesor"]==fa]
+            hs=hf.head(fn)[["fecha","asesor","tipo","caja","cantidad","nota"]].copy()
+            hs["fecha"]=hs["fecha"].dt.strftime("%d/%m/%Y %H:%M")
+            st.dataframe(hs,use_container_width=True,hide_index=True)
+        else: st.info("Sin registros aún")
 
-            # Filtros
-            col_f1, col_f2, col_f3 = st.columns(3)
-            with col_f1:
-                tipos_disp = ["Todos"] + historial["tipo"].unique().tolist()
-                filtro_tipo = st.selectbox("Filtrar por tipo", tipos_disp)
-            with col_f2:
-                asesores_disp = ["Todos"] + historial["asesor"].unique().tolist()
-                filtro_asesor_h = st.selectbox("Filtrar por asesor", asesores_disp)
-            with col_f3:
-                n_registros = st.selectbox("Mostrar últimos", [20, 50, 100, 200], index=0)
-
-            hf = historial.copy()
-            if filtro_tipo != "Todos": hf = hf[hf["tipo"]==filtro_tipo]
-            if filtro_asesor_h != "Todos": hf = hf[hf["asesor"]==filtro_asesor_h]
-
-            hf_show = hf.head(n_registros)[["fecha","asesor","tipo","caja","cantidad","nota"]].copy()
-            hf_show["fecha"] = hf_show["fecha"].dt.strftime("%d/%m/%Y %H:%M")
-            st.dataframe(hf_show, use_container_width=True, hide_index=True)
-        else:
-            st.info("📭 Sin registros de movimientos")
-
-    # ADMIN - REPORTES
-    elif menu == "📈 Reportes" and ROL == "admin":
-        st.title("📈 REPORTES")
-        ventas = cargar_ventas()
-
+    # ════════════════════════════════════════
+    # ADMIN — REPORTES
+    # ════════════════════════════════════════
+    elif menu=="Reportes" and ROL=="admin":
+        st.title("Reportes")
+        ventas=get_cached_ventas()
         if not ventas.empty:
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Ventas Totales", f"${ventas['monto'].sum():,.0f}")
-            with col2:
-                st.metric("Número de Ventas", len(ventas))
-
+            c1,c2,c3=st.columns(3)
+            with c1: st.metric("Ventas totales",f"${ventas['monto'].sum():,.0f}")
+            with c2: st.metric("Nº de ventas",len(ventas))
+            with c3: st.metric("Ticket promedio",f"${ventas['monto'].mean():,.0f}")
             st.markdown("---")
-            st.subheader("Ventas por Asesor")
-            va = ventas.groupby("asesor")["monto"].sum().reset_index()
-            fig = px.bar(va, x="asesor", y="monto", color="monto", color_continuous_scale="Teal")
-            st.plotly_chart(fig, use_container_width=True)
+            cl,cr=st.columns(2)
+            with cl:
+                st.subheader("Ventas por Asesor")
+                va=ventas.groupby("asesor")["monto"].sum().reset_index()
+                fig1=px.bar(va,x="asesor",y="monto",color="monto",color_continuous_scale=["#1e2d4a","#3b82f6"])
+                fig1.update_layout(paper_bgcolor="#151822",plot_bgcolor="#151822",font_color="#c9d1e8",showlegend=False)
+                st.plotly_chart(fig1,use_container_width=True)
+            with cr:
+                st.subheader("Evolución de Ventas")
+                ventas["mes"]=pd.to_datetime(ventas["fecha"],errors="coerce").dt.to_period("M").astype(str)
+                vm=ventas.groupby("mes")["monto"].sum().reset_index()
+                fig2=px.line(vm,x="mes",y="monto",markers=True,color_discrete_sequence=["#3b82f6"])
+                fig2.update_layout(paper_bgcolor="#151822",plot_bgcolor="#151822",font_color="#c9d1e8")
+                st.plotly_chart(fig2,use_container_width=True)
+        else: st.info("Sin datos de ventas aún")
 
-    # ============================================================
-    # ============================================================
-    # ASESOR - MI RESUMEN
-    # ============================================================
-    elif menu == "📊 Mi Resumen" and ROL == "asesor":
-        st.title("📊 MI RESUMEN")
+    # ════════════════════════════════════════════════════
+    # ASESOR — helper selector
+    # ════════════════════════════════════════════════════
+    # ✅ Cada módulo del asesor tiene selector de asesor
+    # → por defecto apunta al usuario logueado
+    # → puede seleccionar a cualquier otro asesor
+    # → así Oscar se asigna a sí mismo, Lucy también,
+    #   y pueden verse/asignarse entre ellos
 
-        mv = cargar_ventas(asesor=USUARIO)
-        mc = cargar_creditos(asesor=USUARIO)
-        mcli = cargar_clientes(asesor=USUARIO)
-        pend = mc[mc["pagado"]==False] if not mc.empty else pd.DataFrame()
+    elif menu=="Mi Resumen" and ROL=="asesor":
+        todos=get_cached_asesores()
+        av=st.selectbox("Ver como",todos,index=todos.index(USUARIO) if USUARIO in todos else 0,key="res_av")
+        st.title(f"Resumen — {av}")
+        mv=cargar_ventas(asesor=av); mc=cargar_creditos(asesor=av); mcli=cargar_clientes(asesor=av)
+        pend=mc[mc["pagado"]==False] if not mc.empty else pd.DataFrame()
+        c1,c2,c3=st.columns(3)
+        with c1: st.metric("Clientes",len(mcli))
+        with c2: st.metric("Ventas",f"${mv['monto'].sum():,.0f}" if not mv.empty else "$0")
+        with c3: st.metric("Crédito pendiente",f"${pend['monto'].sum():,.0f}" if not pend.empty else "$0")
+        if not mv.empty:
+            st.markdown("---"); st.subheader("Últimas ventas")
+            vd=mv.tail(8)[["fecha","cliente","caja","monto"]].copy()
+            vd["fecha"]=pd.to_datetime(vd["fecha"],errors="coerce").dt.strftime("%d/%m/%Y")
+            vd["monto"]=vd["monto"].apply(lambda x:f"${x:,.0f}")
+            st.dataframe(vd,use_container_width=True,hide_index=True)
 
-        col1, col2, col3 = st.columns(3)
-        with col1: st.metric("👥 MIS CLIENTES", len(mcli))
-        with col2: st.metric("💳 MIS VENTAS", f"${mv['monto'].sum():,.0f}" if not mv.empty else "$0")
-        with col3: st.metric("⚠️ PENDIENTE", f"${pend['monto'].sum():,.0f}" if not pend.empty else "$0")
-
-    # ASESOR - MIS CLIENTES
-    elif menu == "👥 Mis Clientes" and ROL == "asesor":
-        st.title("👥 MIS CLIENTES")
-        mc = cargar_clientes(asesor=USUARIO)
-
-        tab1, tab2 = st.tabs(["📋 Ver", "➕ Agregar"])
-
+    elif menu=="Mis Clientes" and ROL=="asesor":
+        todos=get_cached_asesores()
+        av=st.selectbox("Asesor",todos,index=todos.index(USUARIO) if USUARIO in todos else 0,key="cli_av")
+        st.title(f"Clientes — {av}")
+        mc=cargar_clientes(asesor=av)
+        tab1,tab2=st.tabs(["Ver","Agregar"])
         with tab1:
-            if not mc.empty:
-                st.dataframe(mc[["nombre","cedula","telefono"]], use_container_width=True, hide_index=True)
-            else:
-                st.info("📭 Sin clientes")
-
+            if not mc.empty: st.dataframe(mc[["nombre","cedula","telefono"]],use_container_width=True,hide_index=True)
+            else: st.info("Sin clientes")
         with tab2:
-            nombre = st.text_input("Nombre")
-            col1, col2 = st.columns(2)
-            with col1: cedula = st.text_input("Cédula")
-            with col2: telefono = st.text_input("Teléfono")
-
-            if st.button("💾 Guardar", use_container_width=True):
+            nombre=st.text_input("Nombre")
+            c1,c2=st.columns(2)
+            with c1: cedula=st.text_input("Cédula")
+            with c2: telefono=st.text_input("Teléfono")
+            if st.button("Guardar cliente",use_container_width=True):
                 if nombre and cedula:
-                    if guardar_cliente(nombre, cedula, telefono, USUARIO):
-                        st.success("✅"); st.rerun()
-                else:
-                    st.error("❌ Completa campos")
+                    if guardar_cliente(nombre,cedula,telefono,av):
+                        st.success("Guardado"); clear_all_cache(); st.rerun()
+                else: st.error("Nombre y cédula son obligatorios")
 
-    # ASESOR - MIS INSUMOS
-    elif menu == "📦 Mis Insumos" and ROL == "asesor":
-        st.title("📦 MIS INSUMOS")
-        ma = cargar_asignaciones(asesor=USUARIO)
-
+    elif menu=="Mis Insumos" and ROL=="asesor":
+        todos=get_cached_asesores()
+        av=st.selectbox("Asesor",todos,index=todos.index(USUARIO) if USUARIO in todos else 0,key="ins_av")
+        st.title(f"Insumos — {av}")
+        ma=cargar_asignaciones(asesor=av)
         if not ma.empty:
-            st.metric("Total unidades", int(ma["cantidad"].sum()))
-            st.dataframe(ma[["caja","cantidad","fecha"]], use_container_width=True, hide_index=True)
-        else:
-            st.info("📭 Sin insumos")
+            st.metric("Total unidades",int(ma["cantidad"].sum()))
+            st.markdown("---")
+            for _,arow in ma.iterrows():
+                c1,c2,c3=st.columns([2,1,3])
+                with c1: st.write(f"📦 **{arow['caja']}**")
+                with c2: st.write(f"{int(arow['cantidad'])} uds")
+                with c3:
+                    com=arow.get("comentario","") or ""
+                    if com: st.caption(f"💬 {com}")
+        else: st.info("Sin insumos asignados")
 
-    # ASESOR - MIS EQUIPOS
-    elif menu == "🖥️ Mis Equipos" and ROL == "asesor":
-        st.title("🖥️ MIS EQUIPOS")
-        me = cargar_equipos(asesor=USUARIO)
-
+    elif menu=="Mis Equipos" and ROL=="asesor":
+        todos=get_cached_asesores()
+        av=st.selectbox("Asesor",todos,index=todos.index(USUARIO) if USUARIO in todos else 0,key="eq_av")
+        st.title(f"Equipos — {av}")
+        me=cargar_equipos(asesor=av)
         if not me.empty:
-            for _, row in me.iterrows():
-                with st.expander(f"{COLOR_ESTADO.get(row['Estado'],'⚪')} {row['Nombre']}"):
-                    st.write(f"💰 ${int(row.get('Precio',0)):,.0f}")
-                    st.write(f"👤 {row.get('Cliente_Asignado','')}")
-        else:
-            st.info("📭 Sin equipos")
+            for _,row in me.iterrows():
+                with st.expander(f"{COLOR_ESTADO.get(row['Estado'],'⚪')}  {row['Nombre']}"):
+                    c1,c2=st.columns(2)
+                    with c1: st.write(f"**Precio:** ${int(row.get('Precio',0)):,.0f}")
+                    with c2: st.write(f"**Cliente:** {row.get('Cliente_Asignado','—')}")
+        else: st.info("Sin equipos asignados")
 
-    # ASESOR - REGISTRAR VENTA
-    elif menu == "🛒 Registrar Venta" and ROL == "asesor":
-        st.title("🛒 REGISTRAR VENTA")
-
-        mcli = cargar_clientes(asesor=USUARIO)
-        ma = cargar_asignaciones(asesor=USUARIO)
-        inventario = get_cached_inventario()
-
-        col1, col2 = st.columns(2)
-        with col1: fecha = st.date_input("Fecha")
-        with col2:
-            lcli = mcli["nombre"].tolist() if not mcli.empty else []
-            cv = st.selectbox("Cliente", lcli if lcli else ["Sin clientes"])
-
-        cajas_d = ma["caja"].unique().tolist() if not ma.empty else []
-        col3, col4 = st.columns(2)
-        with col3: cajav = st.selectbox("Caja", cajas_d if cajas_d else ["Sin cajas"])
-        with col4:
+    elif menu=="Registrar Venta" and ROL=="asesor":
+        st.title("Registrar Venta")
+        todos=get_cached_asesores()
+        av=st.selectbox("Asesor de la venta",todos,index=todos.index(USUARIO) if USUARIO in todos else 0,key="vta_av")
+        inventario=get_cached_inventario(); mcli=cargar_clientes(asesor=av); ma=cargar_asignaciones(asesor=av)
+        c1,c2=st.columns(2)
+        with c1: fecha=st.date_input("Fecha")
+        with c2:
+            lcli=mcli["nombre"].tolist() if not mcli.empty else []
+            cv=st.selectbox("Cliente",lcli if lcli else ["Sin clientes"])
+        cajas_d=ma["caja"].unique().tolist() if not ma.empty else []
+        c3,c4=st.columns(2)
+        with c3: cajav=st.selectbox("Caja",cajas_d if cajas_d else ["Sin cajas"])
+        with c4:
             if cajas_d and not inventario.empty and cajav in inventario["Caja"].values:
-                st.metric("Stock", int(inventario[inventario["Caja"]==cajav].iloc[0]["Cantidad"]))
-
-        col5, col6 = st.columns(2)
-        with col5: cantv = st.number_input("Cantidad", min_value=1, value=1)
-        with col6:
-            valu = 0
+                st.metric("Stock",int(inventario[inventario["Caja"]==cajav].iloc[0]["Cantidad"]))
+        c5,c6=st.columns(2)
+        with c5: cantv=st.number_input("Cantidad",min_value=1,value=1)
+        with c6:
+            valu=0
             if cajas_d and not inventario.empty and cajav in inventario["Caja"].values:
-                caja_id = int(inventario[inventario["Caja"]==cajav].iloc[0]["id"])
-                items = cargar_items_caja(caja_id)
-                valu = int((items["precio_unitario"].mean())) if not items.empty else 0
-            st.metric("Precio", f"${valu:,.0f}")
-
-        montov = cantv * valu
-        st.metric("Total", f"${montov:,.0f}")
-        ecv = st.checkbox("Venta a Crédito")
-
-        if st.button("💾 Guardar", use_container_width=True):
-            if cv != "Sin clientes" and cajav != "Sin cajas":
-                crow = inventario[inventario["Caja"]==cajav].iloc[0]
-                nc = int(crow["Cantidad"]) - cantv
-                if nc < 0:
-                    st.error("❌ Stock insuficiente")
+                cid5=int(inventario[inventario["Caja"]==cajav].iloc[0]["id"])
+                itms=cargar_items_caja(cid5)
+                valu=int(itms["precio_unitario"].mean()) if not itms.empty else 0
+            st.metric("Precio",f"${valu:,.0f}")
+        montov=cantv*valu; st.metric("Total",f"${montov:,.0f}")
+        ecv=st.checkbox("Venta a crédito")
+        if st.button("Registrar venta",use_container_width=True):
+            if cv!="Sin clientes" and cajav!="Sin cajas":
+                crow=inventario[inventario["Caja"]==cajav].iloc[0]
+                nc=int(crow["Cantidad"])-cantv
+                if nc<0: st.error("Stock insuficiente")
                 else:
-                    actualizar_caja(int(crow["id"]), {"Cantidad":nc})
-                    guardar_venta(fecha, cv, cajav, cantv, valu, montov, ecv, USUARIO)
-                    if ecv:
-                        guardar_credito(cv, montov, fecha, USUARIO)
-                    st.success("✅ Venta registrada"); st.rerun()
-            else:
-                st.error("❌ Completa campos")
+                    actualizar_caja(int(crow["id"]),{"Cantidad":nc})
+                    guardar_venta(fecha,cv,cajav,cantv,valu,montov,ecv,av)
+                    if ecv: guardar_credito(cv,montov,fecha,av)
+                    st.success("Venta registrada"); clear_all_cache(); st.rerun()
+            else: st.error("Completa todos los campos")
 
-    # ASESOR - MIS CRÉDITOS
-    elif menu == "💳 Mis Créditos" and ROL == "asesor":
-        st.title("💳 MIS CRÉDITOS")
-        mc = cargar_creditos(asesor=USUARIO)
-
+    elif menu=="Mis Créditos" and ROL=="asesor":
+        todos=get_cached_asesores()
+        av=st.selectbox("Asesor",todos,index=todos.index(USUARIO) if USUARIO in todos else 0,key="cred_av")
+        st.title(f"Créditos — {av}")
+        mc=cargar_creditos(asesor=av)
         if not mc.empty:
-            pend = mc[mc["pagado"]==False]
-            col1, col2 = st.columns(2)
-            with col1: st.metric("PENDIENTE", f"${pend['monto'].sum():,.0f}" if not pend.empty else "$0")
-            with col2: st.metric("REGISTROS", len(pend))
-
-            for _, row in mc.iterrows():
-                col1, col2, col3, col4 = st.columns([2, 1.5, 1.5, 1])
-                with col1: st.write(f"👤 {row['cliente']}")
-                with col2: st.write(f"💰 ${int(row['monto']):,.0f}")
-                with col3:
-                    fc = row["fecha_credito"].strftime("%d/%m/%Y") if pd.notna(row["fecha_credito"]) else ""
-                    st.write(f"📅 {fc}")
-                with col4:
-                    if not row["pagado"]:
-                        if st.button("✓", key=f"pa_{row['id']}", use_container_width=True):
-                            if marcar_credito_pagado(int(row["id"])):
-                                st.success("✅"); st.rerun()
-        else:
-            st.info("✅ Sin créditos")
+            pend=mc[mc["pagado"]==False]
+            c1,c2=st.columns(2)
+            with c1: st.metric("Pendiente",f"${pend['monto'].sum():,.0f}" if not pend.empty else "$0")
+            with c2: st.metric("Registros",len(pend))
+            st.markdown("---")
+            for _,row in mc.iterrows():
+                c1,c2,c3,c4=st.columns([2,1.5,1.5,1])
+                with c1: st.write(f"👤 {row['cliente']}")
+                with c2: st.write(f"${int(row['monto']):,.0f}")
+                with c3:
+                    fc=row["fecha_credito"].strftime("%d/%m/%Y") if pd.notna(row["fecha_credito"]) else "—"
+                    st.write(fc)
+                with c4:
+                    if row["pagado"]: st.caption("✓")
+                    else:
+                        if st.button("Pagar",key=f"pa_{row['id']}",use_container_width=True):
+                            if marcar_credito_pagado(int(row["id"])): clear_all_cache(); st.rerun()
+        else: st.info("Sin créditos")
