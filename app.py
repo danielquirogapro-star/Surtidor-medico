@@ -602,6 +602,7 @@ def cargar_historial_asignaciones(asesor=None,caja=None):
     except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","asesor","caja","cantidad","tipo","nota","fecha"])
 
 def cargar_asignaciones(asesor=None):
+    """Carga asignaciones agrupadas (cabecera)"""
     try:
         q=get_supabase_client().table("asignaciones").select("*")
         if asesor: q=q.eq("asesor",asesor)
@@ -613,9 +614,69 @@ def cargar_asignaciones(asesor=None):
         return pd.DataFrame(columns=["id","asesor","caja","cantidad","fecha","comentario"])
     except Exception as e: st.error(f"Error:{e}"); return pd.DataFrame(columns=["id","asesor","caja","cantidad","fecha","comentario"])
 
-def guardar_asignacion(asesor,caja,cantidad,fecha,comentario=""):
+def cargar_asignaciones_items(asesor=None):
+    """Carga items individuales asignados (nueva tabla asignaciones_items)"""
     try:
-        get_supabase_client().table("asignaciones").insert({"asesor":asesor,"caja":caja,"cantidad":int(cantidad),"fecha":fecha.strftime("%Y-%m-%d"),"comentario":comentario}).execute()
+        q=get_supabase_client().table("asignaciones_items").select("*")
+        if asesor: q=q.eq("asesor",asesor)
+        resp=q.execute()
+        if resp.data:
+            df=pd.DataFrame(resp.data)
+            for c in ["asesor","item_nombre","item_descripcion","nombre_caja","comentario"]:
+                if c not in df.columns: df[c]=""
+            for c in ["cantidad","item_id","caja_id"]:
+                if c not in df.columns: df[c]=0
+            if "fecha" in df.columns:
+                df["fecha"]=pd.to_datetime(df["fecha"],errors="coerce")
+            return df
+        return pd.DataFrame(columns=["id","asesor","item_id","item_nombre","item_descripcion","caja_id","nombre_caja","cantidad","fecha","comentario"])
+    except Exception as e:
+        st.error(f"Error:{e}")
+        return pd.DataFrame(columns=["id","asesor","item_id","item_nombre","item_descripcion","caja_id","nombre_caja","cantidad","fecha","comentario"])
+
+def guardar_asignacion_items(asesor, items_seleccionados, fecha, comentario=""):
+    """
+    items_seleccionados: lista de dicts con keys:
+        item_id, item_nombre, item_descripcion, caja_id, nombre_caja, cantidad
+    """
+    try:
+        sb=get_supabase_client()
+        filas=[]
+        for it in items_seleccionados:
+            filas.append({
+                "asesor":       asesor,
+                "item_id":      int(it["item_id"]),
+                "item_nombre":  it["item_nombre"],
+                "item_descripcion": it.get("item_descripcion",""),
+                "caja_id":      int(it["caja_id"]),
+                "nombre_caja":  it["nombre_caja"],
+                "cantidad":     int(it["cantidad"]),
+                "fecha":        fecha.strftime("%Y-%m-%d"),
+                "comentario":   comentario
+            })
+        if filas:
+            sb.table("asignaciones_items").insert(filas).execute()
+            # Registrar en historial un resumen
+            resumen=", ".join(f"{f['cantidad']}x {f['item_nombre']}" for f in filas[:3])
+            if len(filas)>3: resumen+=f" (+{len(filas)-3} más)"
+            registrar_historial(asesor,"varios",sum(f["cantidad"] for f in filas),"asignacion",
+                                f"→ {asesor}: {resumen}" + (f" — {comentario}" if comentario else ""))
+        return True
+    except Exception as e: st.error(f"Error:{e}"); return False
+
+def eliminar_asignacion_item(asig_id):
+    try:
+        get_supabase_client().table("asignaciones_items").delete().eq("id",asig_id).execute()
+        return True
+    except Exception as e: st.error(f"Error:{e}"); return False
+
+def guardar_asignacion(asesor,caja,cantidad,fecha,comentario=""):
+    """Mantener compatibilidad con flujo antiguo"""
+    try:
+        get_supabase_client().table("asignaciones").insert({
+            "asesor":asesor,"caja":caja,"cantidad":int(cantidad),
+            "fecha":fecha.strftime("%Y-%m-%d"),"comentario":comentario
+        }).execute()
         nota=f"Asignación {cantidad} uds '{caja}' → {asesor}"
         if comentario: nota+=f" — {comentario}"
         registrar_historial(asesor,caja,cantidad,"asignacion",nota)
@@ -1060,62 +1121,175 @@ else:
                 st.plotly_chart(fig,use_container_width=True)
 
     # ════════════════════════════════════════
-    # ADMIN — ASIGNACIONES (+ comentario + auto-asignación)
+    # ════════════════════════════════════════
+    # ADMIN — ASIGNACIONES por items
     # ════════════════════════════════════════
     elif menu=="Asignaciones" and ROL=="admin":
         st.title("Asignaciones")
-        asesores=get_cached_asesores(); inventario=get_cached_inventario()
-        tab1,tab2=st.tabs(["Ver asignaciones","Nueva asignación"])
+        asesores   = get_cached_asesores()
+        inventario = get_cached_inventario()
+        todos_items= get_cached_todos_items()
 
+        tab1, tab2 = st.tabs(["Ver asignaciones", "Nueva asignación"])
+
+        # ── TAB 1: Ver ──
         with tab1:
-            asignaciones=get_cached_asignaciones()
-            if not asignaciones.empty:
-                fas=st.selectbox("Filtrar asesor",["Todos"]+asesores)
-                df_as=asignaciones if fas=="Todos" else asignaciones[asignaciones["asesor"]==fas]
-                lista_a=asesores if fas=="Todos" else [fas]
-                for asesor in lista_a:
-                    asig=df_as[df_as["asesor"]==asesor]
-                    if asig.empty: continue
-                    with st.expander(f"🧑‍💼  {asesor}   ·   {int(asig['cantidad'].sum())} uds   ·   {len(asig)} registro(s)"):
-                        for _,arow in asig.iterrows():
-                            c1,c2,c3,c4=st.columns([2,1,3,1])
-                            with c1: st.write(f"📦 **{arow['caja']}**")
-                            with c2: st.write(f"{int(arow['cantidad'])} uds")
-                            with c3:
-                                com=arow.get("comentario","") or ""
-                                if com: st.caption(f"💬 {com}")
-                            with c4:
-                                if st.button("Eliminar",key=f"da_{arow['id']}",use_container_width=True):
-                                    try:
-                                        get_supabase_client().table("asignaciones").delete().eq("id",int(arow["id"])).execute()
-                                        clear_all_cache(); st.rerun()
-                                    except Exception as e: st.error(e)
-            else: st.info("Sin asignaciones registradas")
+            asig_items = cargar_asignaciones_items()
+            if not asig_items.empty:
+                fas = st.selectbox("Filtrar asesor", ["Todos"]+asesores, key="fas_ver")
+                df_f = asig_items if fas=="Todos" else asig_items[asig_items["asesor"]==fas]
 
+                for asesor in (asesores if fas=="Todos" else [fas]):
+                    bloque = df_f[df_f["asesor"]==asesor]
+                    if bloque.empty: continue
+                    total_uds = int(bloque["cantidad"].sum())
+                    with st.expander(f"🧑‍💼  {asesor}   ·   {total_uds} uds   ·   {len(bloque)} item(s)"):
+                        # Agrupar por fecha+comentario para mostrar las "asignaciones"
+                        bloque = bloque.copy()
+                        bloque["fecha_str"] = pd.to_datetime(bloque["fecha"],errors="coerce").dt.strftime("%d/%m/%Y")
+                        grupos = bloque.groupby(["fecha_str","comentario"], dropna=False)
+                        for (fecha_g, com_g), grupo in grupos:
+                            st.markdown(f"""
+                            <div style='background:#F7F8FA;border:1px solid #E4E8EF;
+                                        border-radius:8px;padding:10px 14px;margin-bottom:8px;'>
+                                <span style='font-size:0.75rem;color:#8A96A8;'>📅 {fecha_g}</span>
+                                {'<span style="font-size:0.75rem;color:#0A6E5C;margin-left:10px;">💬 '+str(com_g)+'</span>' if com_g and str(com_g).strip() else ''}
+                            </div>
+                            """, unsafe_allow_html=True)
+                            for _, row in grupo.iterrows():
+                                c1,c2,c3,c4 = st.columns([3,1,2,1])
+                                with c1:
+                                    st.write(f"🔸 **{row['item_nombre']}**")
+                                    if row.get("item_descripcion",""):
+                                        st.caption(row["item_descripcion"])
+                                with c2: st.write(f"{int(row['cantidad'])} uds")
+                                with c3: st.caption(f"📦 {row.get('nombre_caja','')}")
+                                with c4:
+                                    if st.button("✕", key=f"del_ai_{row['id']}", use_container_width=True):
+                                        if eliminar_asignacion_item(int(row["id"])):
+                                            clear_all_cache(); st.rerun()
+            else:
+                st.info("Sin asignaciones registradas")
+
+        # ── TAB 2: Nueva asignación ──
         with tab2:
-            if not inventario.empty:
-                c1,c2=st.columns(2)
-                with c1:
-                    # ✅ Cualquier asesor se puede asignar a sí mismo o a otro
-                    ad=st.selectbox("Asesor destinatario",asesores,key="na_asesor")
-                with c2:
-                    cs_a=st.selectbox("Caja",inventario["Caja"].tolist(),key="na_caja")
-                disp=int(inventario[inventario["Caja"]==cs_a].iloc[0]["Cantidad"])
-                c3,c4=st.columns(2)
-                with c3: ca2=st.number_input("Cantidad",min_value=1,max_value=max(disp,1),value=1)
-                with c4: st.metric("Stock disponible",disp)
-                fa2=st.date_input("Fecha")
-                # ✅ Comentario en la asignación
-                com2=st.text_input("Comentario (opcional)",placeholder="Ej: Ruta norte, reponer stock…")
-                if st.button("Asignar",use_container_width=True):
-                    if ca2<=disp:
-                        rc=inventario[inventario["Caja"]==cs_a].iloc[0]
-                        actualizar_caja(int(rc["id"]),{"Cantidad":disp-ca2})
-                        if guardar_asignacion(ad,cs_a,ca2,fa2,com2):
-                            st.success(f"✅ {ca2} uds de '{cs_a}' asignadas a {ad}")
-                            clear_all_cache(); st.rerun()
-                    else: st.error("Stock insuficiente")
-            else: st.error("No hay cajas registradas")
+            if todos_items.empty or inventario.empty:
+                st.error("No hay items en el inventario. Ve a Insumos y agrega items primero.")
+            else:
+                # Enriquecer items con nombre de caja
+                inv_map = inventario[["id","Caja"]].rename(columns={"id":"caja_id","Caja":"nombre_caja"})
+                items_enr = todos_items.merge(inv_map, on="caja_id", how="left")
+                items_enr["nombre_caja"] = items_enr["nombre_caja"].fillna("Sin caja")
+                items_enr["label"] = items_enr.apply(
+                    lambda r: f"{r['nombre']}  —  {r['nombre_caja']}  ({int(r['cantidad'])} disp.)", axis=1
+                )
+
+                st.markdown("#### 1 · Destinatario y fecha")
+                c1,c2,c3 = st.columns(3)
+                with c1: ad = st.selectbox("Asesor destinatario", asesores, key="na_asesor")
+                with c2: fa2 = st.date_input("Fecha")
+                with c3: com2 = st.text_input("Comentario (opcional)", placeholder="Ruta norte, reponer stock…")
+
+                st.markdown("#### 2 · Selecciona items")
+
+                # Filtro por caja para facilitar la búsqueda
+                cajas_disp = ["Todas las cajas"] + inventario["Caja"].tolist()
+                filtro_caja = st.selectbox("Filtrar por caja", cajas_disp, key="filtro_caja_asig")
+
+                if filtro_caja == "Todas las cajas":
+                    items_vista = items_enr
+                else:
+                    items_vista = items_enr[items_enr["nombre_caja"]==filtro_caja]
+
+                if items_vista.empty:
+                    st.warning("No hay items en esa caja")
+                else:
+                    # Carrito de asignación en session_state
+                    if "carrito_asig" not in st.session_state:
+                        st.session_state.carrito_asig = {}  # {item_id: cantidad}
+
+                    # Tabla de selección
+                    st.markdown("**Items disponibles** — agrega los que necesites:")
+                    for _, row in items_vista.iterrows():
+                        iid = int(row["id"])
+                        disp = int(row["cantidad"])
+                        c1,c2,c3,c4 = st.columns([3,1.5,1.5,1])
+                        with c1:
+                            st.write(f"**{row['nombre']}**")
+                            if row.get("descripcion",""):
+                                st.caption(row["descripcion"])
+                        with c2: st.caption(f"📦 {row['nombre_caja']}")
+                        with c3: st.caption(f"Stock: {disp} uds")
+                        with c4:
+                            cant_key = f"cant_asig_{iid}"
+                            cant = st.number_input(
+                                "Cant",
+                                min_value=0,
+                                max_value=disp,
+                                value=st.session_state.carrito_asig.get(iid, 0),
+                                key=cant_key,
+                                label_visibility="collapsed"
+                            )
+                            st.session_state.carrito_asig[iid] = cant
+
+                    # Resumen carrito
+                    carrito_activo = {k:v for k,v in st.session_state.carrito_asig.items() if v > 0}
+
+                    st.markdown("---")
+                    st.markdown("#### 3 · Resumen de la asignación")
+
+                    if not carrito_activo:
+                        st.info("Agrega cantidades a los items que quieras asignar")
+                    else:
+                        total_uds_c = sum(carrito_activo.values())
+                        st.markdown(f"""
+                        <div style='background:#EAF5F2;border:1px solid #0A6E5C;border-radius:10px;
+                                    padding:14px 18px;margin-bottom:12px;'>
+                            <div style='font-weight:700;color:#0A6E5C;font-size:0.9rem;'>
+                                📋 {len(carrito_activo)} item(s) · {total_uds_c} unidades totales → {ad}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        for iid, cant in carrito_activo.items():
+                            row_i = items_enr[items_enr["id"]==iid]
+                            if row_i.empty: continue
+                            row_i = row_i.iloc[0]
+                            c1,c2,c3 = st.columns([3,1,2])
+                            with c1: st.write(f"🔸 **{row_i['nombre']}**")
+                            with c2: st.write(f"{cant} uds")
+                            with c3: st.caption(f"📦 {row_i['nombre_caja']}")
+
+                        if st.button("✅ Confirmar Asignación", use_container_width=True):
+                            items_a_asignar = []
+                            errores = []
+                            for iid, cant in carrito_activo.items():
+                                row_i = items_enr[items_enr["id"]==iid]
+                                if row_i.empty: continue
+                                row_i = row_i.iloc[0]
+                                if cant > int(row_i["cantidad"]):
+                                    errores.append(f"Stock insuficiente: {row_i['nombre']} (disp: {int(row_i['cantidad'])})")
+                                else:
+                                    items_a_asignar.append({
+                                        "item_id":          iid,
+                                        "item_nombre":      row_i["nombre"],
+                                        "item_descripcion": row_i.get("descripcion",""),
+                                        "caja_id":          int(row_i["caja_id"]),
+                                        "nombre_caja":      row_i["nombre_caja"],
+                                        "cantidad":         cant
+                                    })
+
+                            if errores:
+                                for e in errores: st.error(e)
+                            elif guardar_asignacion_items(ad, items_a_asignar, fa2, com2):
+                                # Descontar stock de cada item
+                                for it in items_a_asignar:
+                                    nuevo_stock = int(items_enr[items_enr["id"]==it["item_id"]].iloc[0]["cantidad"]) - it["cantidad"]
+                                    actualizar_item_caja(it["item_id"], {"cantidad": nuevo_stock})
+                                # Limpiar carrito
+                                st.session_state.carrito_asig = {}
+                                st.success(f"✅ Asignación completada — {len(items_a_asignar)} items a {ad}")
+                                clear_all_cache(); st.rerun()
 
     # ════════════════════════════════════════
     # ADMIN — VENTAS
@@ -1304,18 +1478,34 @@ else:
         todos=get_cached_asesores()
         av=st.selectbox("Asesor",todos,index=todos.index(USUARIO) if USUARIO in todos else 0,key="ins_av")
         st.title(f"Insumos — {av}")
-        ma=cargar_asignaciones(asesor=av)
+        ma = cargar_asignaciones_items(asesor=av)
         if not ma.empty:
-            st.metric("Total unidades",int(ma["cantidad"].sum()))
+            total = int(ma["cantidad"].sum())
+            c1,c2 = st.columns(2)
+            with c1: st.metric("Total unidades asignadas", total)
+            with c2: st.metric("Items distintos", ma["item_nombre"].nunique())
             st.markdown("---")
-            for _,arow in ma.iterrows():
-                c1,c2,c3=st.columns([2,1,3])
-                with c1: st.write(f"📦 **{arow['caja']}**")
-                with c2: st.write(f"{int(arow['cantidad'])} uds")
-                with c3:
-                    com=arow.get("comentario","") or ""
-                    if com: st.caption(f"💬 {com}")
-        else: st.info("Sin insumos asignados")
+            # Agrupar por fecha+comentario
+            ma["fecha_str"] = pd.to_datetime(ma["fecha"],errors="coerce").dt.strftime("%d/%m/%Y")
+            grupos = ma.groupby(["fecha_str","comentario"], dropna=False)
+            for (fecha_g, com_g), grupo in grupos:
+                st.markdown(f"""
+                <div style='background:#F7F8FA;border:1px solid #E4E8EF;border-radius:8px;
+                            padding:10px 14px;margin-bottom:6px;'>
+                    <span style='font-size:0.75rem;color:#8A96A8;'>📅 {fecha_g}</span>
+                    {'<span style="font-size:0.75rem;color:#0A6E5C;margin-left:10px;">💬 '+str(com_g)+'</span>' if com_g and str(com_g).strip() else ''}
+                </div>
+                """, unsafe_allow_html=True)
+                for _, row in grupo.iterrows():
+                    c1,c2,c3 = st.columns([3,1,2])
+                    with c1:
+                        st.write(f"🔸 **{row['item_nombre']}**")
+                        if row.get("item_descripcion",""):
+                            st.caption(row["item_descripcion"])
+                    with c2: st.write(f"{int(row['cantidad'])} uds")
+                    with c3: st.caption(f"📦 {row.get('nombre_caja','')}")
+        else:
+            st.info("Sin insumos asignados")
 
     elif menu=="Mis Equipos" and ROL=="asesor":
         todos=get_cached_asesores()
